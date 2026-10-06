@@ -1,0 +1,83 @@
+# ============================================================
+#  MistHome 配置
+#  世界架构：共享虚空世界分区，副本式按需加载/无人超时卸载
+# ============================================================
+
+storage:
+  # sqlite / mysql
+  type: sqlite
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    database: misthome
+    user: root
+    password: ""
+    pool-size: 4
+    use-ssl: false
+
+world:
+  # 家园世界命名前缀，实际世界名为 misthome_0、misthome_1 ...
+  name-prefix: "misthome_"
+  # 每个世界容纳的家园数量（按正方形网格开方取整，64 -> 8x8）
+  homes-per-world: 64
+  # 槽位边长（格），即最大档家园的占用边长，所有家园按此预留空间
+  slot-size: 512
+  # 相邻家园区域之间的隔离间隔（格）
+  gap: 64
+  # 家园世界内无人持续时间（秒）超过后卸载世界
+  unload-delay-seconds: 300
+  # 兜底扫描周期（秒）：扫描已加载家园世界，标记无人时间并在超时后卸载
+  sweep-interval-seconds: 20
+  # 世界环境，目前仅支持 NORMAL（虚空主世界）
+  environment: NORMAL
+
+tiers:
+  # 家园档位：level 必须连续递增；radius 为可用范围半径（格），不得超过 slot-size/2
+  - level: 0
+    name: "初始家园"
+    radius: 64
+    upgrade-price: 0
+  - level: 1
+    name: "中型家园"
+    radius: 128
+    upgrade-price: 5000
+  - level: 2
+    name: "大型家园"
+    radius: 256
+    upgrade-price: 20000
+
+economy:
+  enabled: true
+  # 创建家园费用（0 为免费）
+  create-price: 1000
+
+teleport:
+  # 吟唱秒数，0 = 立即传送
+  warmup-seconds: 3
+  # 吟唱期间移动是否打断
+  interrupt-on-move: true
+  interrupt-on-damage: true
+  # 冷却秒数
+  cooldown-seconds: 60
+
+template:
+  # 模板目录（插件数据文件夹下），存放 WorldEdit .schem 文件
+  dir: "templates"
+  # 未安装 WorldEdit 或无模板时的降级平台大小（边长，奇数）
+  fallback-platform-size: 5
+  fallback-platform-block: "GRASS_BLOCK"
+
+boundary:
+  # 优先 ProtocolLib 世界边界包；未安装自动降级粒子边界
+  prefer-protocollib: true
+  # 粒子边界刷新周期（tick）
+  particle-interval-ticks: 20
+
+visit:
+  # 邀请有效期（秒）
+  invite-expire-seconds: 30
+  # 公共列表每页数量
+  public-page-size: 45
+
+messages:
+  prefix: "&8[&bMistHome&8] &r"

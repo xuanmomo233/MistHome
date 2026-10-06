@@ -1,0 +1,116 @@
+package dev.mist.home;
+
+import org.bukkit.Bukkit;
+import org.bukkit.command.PluginCommand;
+import org.bukkit.plugin.java.JavaPlugin;
+import dev.mist.home.boundary.BorderService;
+import dev.mist.home.command.MistHomeCommand;
+import dev.mist.home.config.MistConfig;
+import dev.mist.home.economy.EconomyService;
+import dev.mist.home.invite.InviteManager;
+import dev.mist.home.protect.ProtectionListener;
+import dev.mist.home.storage.MysqlStorage;
+import dev.mist.home.storage.SqliteStorage;
+import dev.mist.home.storage.Storage;
+import dev.mist.home.template.TemplateService;
+import dev.mist.home.world.HomeWorldManager;
+
+import java.util.logging.Level;
+
+/**
+ * MistHome - 玩家家园插件。
+ * 共享虚空世界分区 + 副本式按需加载/无人超时卸载。
+ * 目标平台：Mohist 1.20.1（Bukkit/Spigot API）。
+ */
+public final class MistHomePlugin extends JavaPlugin {
+
+    private MistConfig mistConfig;
+    private HomeWorldManager worldManager;
+    private EconomyService economy;
+    private TemplateService templates;
+    private BorderService borders;
+    private InviteManager invites;
+    private Storage storage;
+
+    @Override
+    public void onEnable() {
+        saveDefaultConfig();
+        mistConfig = new MistConfig(getConfig());
+
+        // 存储层
+        storage = "mysql".equalsIgnoreCase(mistConfig.storageType())
+                ? new MysqlStorage(this) : new SqliteStorage(this);
+        try {
+            storage.init();
+        } catch (Exception e) {
+            getLogger().log(Level.SEVERE, "存储初始化失败，插件停用", e);
+            Bukkit.getPluginManager().disablePlugin(this);
+            return;
+        }
+
+        // 世界管理（副本式加载/卸载）
+        worldManager = new HomeWorldManager(this);
+        worldManager.start();
+
+        // 软依赖钩子
+        economy = new EconomyService(this);
+        economy.hook();
+        templates = new TemplateService(this);
+        templates.hook();
+        borders = new BorderService(this);
+        borders.hook();
+
+        invites = new InviteManager(this);
+
+        // 监听器
+        Bukkit.getPluginManager().registerEvents(new ProtectionListener(this), this);
+
+        // 命令
+        PluginCommand cmd = getCommand("misthome");
+        if (cmd != null) {
+            MistHomeCommand executor = new MistHomeCommand(this);
+            cmd.setExecutor(executor);
+            cmd.setTabCompleter(executor);
+        }
+
+        getLogger().info("MistHome 已启用");
+    }
+
+    @Override
+    public void onDisable() {
+        if (worldManager != null) {
+            worldManager.shutdown();
+        }
+        if (storage != null) {
+            storage.close();
+        }
+    }
+
+    public MistConfig mistConfig() {
+        return mistConfig;
+    }
+
+    public HomeWorldManager worldManager() {
+        return worldManager;
+    }
+
+    public EconomyService economy() {
+        return economy;
+    }
+
+    public TemplateService templates() {
+        return templates;
+    }
+
+    public BorderService borders() {
+        return borders;
+    }
+
+    public InviteManager invites() {
+        return invites;
+    }
+
+    public Storage storage() {
+        return storage;
+    }
+}

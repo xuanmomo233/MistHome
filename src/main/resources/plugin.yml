@@ -1,0 +1,25 @@
+name: ${name}
+version: ${version}
+main: ${main}
+api-version: '1.20'
+description: 玩家家园系统 - 共享虚空世界分区，副本式按需加载卸载
+author: 17Artist
+softdepend:
+  - Vault
+  - WorldEdit
+  - ProtocolLib
+commands:
+  misthome:
+    description: 家园主命令
+    aliases: [mh, home]
+    usage: /misthome <子命令>
+permissions:
+  misthome.use:
+    description: 使用家园系统
+    default: true
+  misthome.visit:
+    description: 参观公开家园
+    default: true
+  misthome.admin:
+    description: 家园管理权限
+    default: op
