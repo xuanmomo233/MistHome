@@ -74,9 +74,20 @@ public class TeleportService implements Listener {
                     HomeRegion region = SlotAllocator.regionOf(
                             p.globalSlot(cfg.homesPerWorld()), cfg.homesPerWorld(),
                             cfg.slotSize(), 0);
-                    return new Location(world,
-                            region.centerX() + home.spawnX(), home.spawnY(),
-                            region.centerZ() + home.spawnZ(),
+                    double ax = region.centerX() + home.spawnX();
+                    double az = region.centerZ() + home.spawnZ();
+                    // 数据缺失兜底：落点脚下无地面（虚空）→ 中心铺平台改传平台
+                    int highest = world.getHighestBlockYAt(
+                            (int) Math.floor(ax), (int) Math.floor(az));
+                    if (highest < home.spawnY() - 1) {
+                        plugin.getLogger().warning("家园出生点脚下为虚空（数据缺失/未恢复），"
+                                + "已在槽位中心补降级平台 home=" + home.id());
+                        plugin.templates().pasteFallbackPlatform(world, region);
+                        return new Location(world, region.centerX() + 0.5, 65.0,
+                                region.centerZ() + 0.5,
+                                home.spawnYaw(), home.spawnPitch());
+                    }
+                    return new Location(world, ax, home.spawnY(), az,
                             home.spawnYaw(), home.spawnPitch());
                 }), bypass);
     }

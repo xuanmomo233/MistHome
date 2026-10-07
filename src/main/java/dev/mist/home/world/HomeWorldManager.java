@@ -109,9 +109,14 @@ public class HomeWorldManager implements Listener {
         return plugin.getDataFolder().toPath().resolve(cfg().poolStateFile());
     }
 
+    private static class ParkEntry {
+        String world;
+        int slot;
+    }
+
     private static class PoolState {
         List<String> worlds = new ArrayList<>();
-        Map<String, int[]> parking = new HashMap<>();   // homeId -> [worldIndex, innerSlot]
+        Map<String, ParkEntry> parking = new HashMap<>();   // homeId -> {world, slot}
     }
 
     private void loadState() {
@@ -127,14 +132,19 @@ public class HomeWorldManager implements Listener {
                             poolWorlds.add(w);
                         }
                     }
-                    for (Map.Entry<String, int[]> e : st.parking.entrySet()) {
+                    for (Map.Entry<String, ParkEntry> e : st.parking.entrySet()) {
                         try {
                             long homeId = Long.parseLong(e.getKey());
-                            int wi = e.getValue()[0];
-                            int inner = e.getValue()[1];
-                            parked.put(homeId, new Parking(homeId, wi, inner));
-                            used.computeIfAbsent(wi, k -> ConcurrentHashMap.newKeySet()).add(inner);
-                        } catch (NumberFormatException | ArrayIndexOutOfBoundsException ignored) {
+                            int wi = poolWorlds.indexOf(e.getValue().world);
+                            if (wi < 0) {
+                                plugin.getLogger().warning("台账指向未知世界 "
+                                        + e.getValue().world + "，丢弃停放记录 home=" + homeId);
+                                continue;
+                            }
+                            parked.put(homeId, new Parking(homeId, wi, e.getValue().slot));
+                            used.computeIfAbsent(wi, k -> ConcurrentHashMap.newKeySet())
+                                    .add(e.getValue().slot);
+                        } catch (NumberFormatException ignored) {
                         }
                     }
                 }
@@ -155,8 +165,10 @@ public class HomeWorldManager implements Listener {
         PoolState st = new PoolState();
         st.worlds = new ArrayList<>(poolWorlds);
         for (Parking p : parked.values()) {
-            st.parking.put(String.valueOf(p.homeId()),
-                    new int[]{p.worldIndex(), p.innerSlot()});
+            ParkEntry pe = new ParkEntry();
+            pe.world = worldName(p.worldIndex());
+            pe.slot = p.innerSlot();
+            st.parking.put(String.valueOf(p.homeId()), pe);
         }
         Path f = stateFile();
         try {
@@ -182,14 +194,19 @@ public class HomeWorldManager implements Listener {
                 continue;
             }
             Map<Integer, Long> slotHome = new HashMap<>();
-            int wi = i;
             for (Parking p : parked.values()) {
-                if (p.worldIndex() == wi) {
+                if (p.worldIndex() == i) {
                     slotHome.put(p.innerSlot(), p.homeId());
                 }
             }
             archive.reconcile(dir, i, slotHome,
-                    id -> plugin.homeService() == null ? null : plugin.homeService().byId(id).orElse(null));
+                    id -> plugin.homeService() == null ? null
+                            : plugin.homeService().byIdBlocking(id).orElse(null));
+            if (slotHome.isEmpty() && cfg().deleteWorldOnUnload()) {
+                // 无停放记录的残留目录：孤儿文件已隔离，目录是死世界壳，删除
+                archive.deleteRecursively(dir);
+                plugin.getLogger().info("残留空世界目录已清理: " + poolWorlds.get(i));
+            }
         }
     }
 
@@ -227,11 +244,21 @@ public class HomeWorldManager implements Listener {
     public CompletableFuture<Parking> ensureParked(Home home) {
         Parking existing = parked.get(home.id());
         if (existing != null) {
+            if (existing.worldIndex() >= poolWorlds.size()) {
+                parked.remove(home.id(), existing);   // 台账损坏，重新分配
+                return ensureParked(home);
+            }
             return ensureLoaded(existing.worldIndex())
-                    .thenApply(w -> {
-                        archive.restore(home, archive.worldDir(worldName(existing.worldIndex())),
-                                existing.globalSlot(cfg().homesPerWorld()));
-                        return existing;
+                    .thenCompose(w -> {
+                        // 等清理期间世界可能走了 retire 流程，停放可能已被解除
+                        Parking cur = parked.get(home.id());
+                        if (cur != existing) {
+                            return ensureParked(home);
+                        }
+                        archive.restore(home, archive.worldDir(worldName(cur.worldIndex())),
+                                cur.globalSlot(cfg().homesPerWorld()));
+                        emptySince.remove(cur.worldIndex());
+                        return CompletableFuture.completedFuture(cur);
                     });
         }
 
@@ -281,10 +308,16 @@ public class HomeWorldManager implements Listener {
         saveState();
 
         int fwi = wi;
-        return ensureLoaded(wi).thenApply(w -> {
+        return ensureLoaded(wi).thenCompose(w -> {
+            // 加载等待期间世界可能已卸载并清掉停放（极端时序），复查后重停
+            Parking cur = parked.get(home.id());
+            if (cur != np) {
+                return ensureParked(home);
+            }
             archive.restore(home, archive.worldDir(worldName(fwi)),
                     np.globalSlot(cfg().homesPerWorld()));
-            return np;
+            emptySince.remove(fwi);
+            return CompletableFuture.completedFuture(np);
         });
     }
 
@@ -487,7 +520,7 @@ public class HomeWorldManager implements Listener {
                 }
                 for (Parking p : toArchive) {
                     Home home = plugin.homeService() == null ? null
-                            : plugin.homeService().byId(p.homeId()).orElse(null);
+                            : plugin.homeService().byIdBlocking(p.homeId()).orElse(null);
                     if (home == null) {
                         continue;
                     }
@@ -586,6 +619,13 @@ public class HomeWorldManager implements Listener {
             } catch (Throwable ignored) {
             }
         }
+        // 等待在途清理任务完成，避免并发写同一存档目录
+        for (CompletableFuture<Void> f : cleaning.values()) {
+            try {
+                f.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+            }
+        }
         // 同步归档+删除（关服时不能依赖异步调度器）
         for (int i = 0; i < poolWorlds.size(); i++) {
             File dir = archive.worldDir(poolWorlds.get(i));
@@ -600,7 +640,7 @@ public class HomeWorldManager implements Listener {
             }
             for (Parking p : toArchive) {
                 Home home = plugin.homeService() == null ? null
-                        : plugin.homeService().byId(p.homeId()).orElse(null);
+                        : plugin.homeService().byIdBlocking(p.homeId()).orElse(null);
                 if (home == null) {
                     continue;
                 }

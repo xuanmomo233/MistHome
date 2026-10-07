@@ -53,6 +53,8 @@ public class HomeArchiveService {
 
     /** 家园存档根目录 plugins/MistHome/homes/<名字_uuid8>/ */
     public Path homeDir(Home home) {
+        Path base = plugin.getDataFolder().toPath()
+                .resolve(plugin.mistConfig().archiveDir());
         OfflinePlayer owner = Bukkit.getOfflinePlayer(home.owner());
         String name = owner.getName();
         if (name == null || name.isBlank()) {
@@ -60,9 +62,24 @@ public class HomeArchiveService {
         }
         name = name.replaceAll("[^a-zA-Z0-9_\\-一-龥]", "_");
         String shortUuid = home.owner().toString().substring(0, 8);
-        return plugin.getDataFolder().toPath()
-                .resolve(plugin.mistConfig().archiveDir())
-                .resolve(name + "_" + shortUuid);
+        Path preferred = base.resolve(name + "_" + shortUuid);
+        if (Files.isDirectory(preferred)) {
+            return preferred;
+        }
+        // 玩家改名兜底：按 _uuid8 后缀找回旧目录，避免存档失联
+        if (Files.isDirectory(base)) {
+            try (var stream = Files.list(base)) {
+                var found = stream.filter(p -> p.getFileName().toString()
+                                .endsWith("_" + shortUuid)
+                                && Files.isDirectory(p))
+                        .findFirst();
+                if (found.isPresent()) {
+                    return found.get();
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return preferred;
     }
 
     public boolean hasArchive(Home home) {
@@ -217,7 +234,6 @@ public class HomeArchiveService {
         var cfg = plugin.mistConfig();
         int hpw = cfg.homesPerWorld();
         int slotSize = cfg.slotSize();
-        int span = SlotAllocator.regionSpan(slotSize);
         boolean foundAny = false;
 
         for (String sub : SUB_DIRS) {
@@ -242,7 +258,7 @@ public class HomeArchiveService {
                     quarantine(f, worldDir);
                     continue;
                 }
-                Integer inner = innerSlotOfRegion(worldIndex, rx, rz, hpw, slotSize, span);
+                Integer inner = innerSlotOfRegion(rx, rz, hpw, slotSize);
                 Long homeId = inner == null ? null : slotHomeMap.get(inner);
                 Home home = homeId == null ? null : homeLookup.apply(homeId);
                 if (home != null) {
@@ -258,9 +274,8 @@ public class HomeArchiveService {
         }
     }
 
-    /** region 坐标 -> 世界内槽位号（取槽位基 region 对应的槽位） */
-    private Integer innerSlotOfRegion(int worldIndexIgnored, int rx, int rz,
-                                      int hpw, int slotSize, int span) {
+    /** region 坐标 -> 世界内槽位号（槽内任一 region 都映射回所属槽位） */
+    private Integer innerSlotOfRegion(int rx, int rz, int hpw, int slotSize) {
         int cols = SlotAllocator.cols(hpw);
         int origin = SlotAllocator.gridOrigin(hpw, slotSize);
         // region -> 方块坐标 -> 槽位网格
@@ -271,14 +286,7 @@ public class HomeArchiveService {
         if (gx < 0 || gx >= cols || gz < 0 || gz >= cols) {
             return null;
         }
-        int inner = gz * cols + gx;
-        // 只对齐到槽位基 region 的文件计（槽内第 0 个 region）
-        int slotBaseRX = (origin + gx * slotSize) / SlotAllocator.REGION_SIZE;
-        int slotBaseRZ = (origin + gz * slotSize) / SlotAllocator.REGION_SIZE;
-        if (rx != slotBaseRX || rz != slotBaseRZ) {
-            return null;    // 槽内后续 region 由基 region 文件统一处理
-        }
-        return inner;
+        return gz * cols + gx;
     }
 
     /** 单个 region 文件直接归档到家园目录（崩溃恢复路径） */

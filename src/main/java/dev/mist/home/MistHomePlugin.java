@@ -138,6 +138,12 @@ public final class MistHomePlugin extends JavaPlugin {
         reloadConfig();
         MistConfig next = new MistConfig(getConfig());
         next.validate();
+        if (worldManager != null
+                && (next.homesPerWorld() != mistConfig.homesPerWorld()
+                        || next.slotSize() != mistConfig.slotSize())) {
+            getLogger().warning("homes-per-world/slot-size 运行中变更会导致"
+                    + "已停放家园的槽位映射错乱，请重启服务器后再修改几何参数");
+        }
         this.mistConfig = next;
     }
 

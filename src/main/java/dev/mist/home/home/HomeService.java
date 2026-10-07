@@ -96,6 +96,20 @@ public class HomeService {
     }
 
     /**
+     * 缓存未命中时同步查库回填。
+     * 仅供启动核对/卸载归档等冷路径使用，勿在事件热路径调用（阻塞）。
+     */
+    public Optional<Home> byIdBlocking(long homeId) {
+        Home cached = byId.get(homeId);
+        if (cached != null) {
+            return Optional.of(cached);
+        }
+        Optional<Home> home = storage.findHomeById(homeId);
+        home.ifPresent(this::cache);
+        return home;
+    }
+
+    /**
      * 由世界坐标反查家园区域（用于保护判定，主线程热路径）。
      * 纯内存：坐标 → 内槽位 → 停放台账 → byId 缓存。
      * 未命中（重启后台账恢复但缓存未预热）异步回填后返回 empty。
