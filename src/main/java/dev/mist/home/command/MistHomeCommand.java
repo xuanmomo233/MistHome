@@ -2,6 +2,7 @@ package dev.mist.home.command;
 
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -20,6 +21,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 /**
@@ -80,8 +83,14 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             case "home" -> cmdHome(player);
             case "visit" -> cmdVisit(player, args);
             case "setspawn" -> cmdSetspawn(player);
-            case "invite", "accept", "deny", "members", "ban", "unban",
-                    "public", "private", "upgrade", "list", "gui", "admin" ->
+            case "invite" -> cmdInvite(player, args);
+            case "accept" -> cmdAccept(player);
+            case "deny" -> cmdDeny(player);
+            case "members" -> cmdMembers(player);
+            case "ban" -> cmdBan(player, args);
+            case "unban" -> cmdUnban(player, args);
+            case "gui" -> cmdGui(player);
+            case "public", "private", "upgrade", "list", "admin" ->
                     msg(player, "§7子命令 " + sub + " 将在后续里程碑实现");
             default -> {
                 msg(player, "§c未知子命令，输入 /mh 查看帮助");
@@ -232,6 +241,183 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                             loc.getYaw(), loc.getPitch());
                     plugin.homeService().storage().updateHome(home);
                     msg(player, "§a出生点已更新");
+                }, mainExecutor);
+    }
+
+    // ---------- M4 成员/邀请/封禁 ----------
+
+    /** /mh invite <玩家> —— OPERATOR+ 邀请玩家加入为 MEMBER */
+    private void cmdInvite(Player player, String[] args) {
+        if (args.length < 2) {
+            msg(player, "§c用法：/mh invite <玩家>");
+            return;
+        }
+        Player target = Bukkit.getPlayerExact(args[1]);
+        if (target == null) {
+            msg(player, "§c对方不在线");
+            return;
+        }
+        if (target.getUniqueId().equals(player.getUniqueId())) {
+            msg(player, "§c不能邀请自己");
+            return;
+        }
+        plugin.homeService().homeOfAsync(player.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c你还没有家园");
+                        return;
+                    }
+                    Home home = opt.get();
+                    HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
+                    if (!role.canManageMembers()) {
+                        msg(player, "§c需要家园管理员权限才能邀请");
+                        return;
+                    }
+                    HomeRole targetRole = plugin.homeService()
+                            .roleOf(home, target.getUniqueId());
+                    if (targetRole.canBuild()) {
+                        msg(player, "§c对方已是家园成员");
+                        return;
+                    }
+                    if (targetRole == HomeRole.BANNED) {
+                        msg(player, "§c对方已被封禁，请先 /mh unban");
+                        return;
+                    }
+                    plugin.invites().invite(target.getUniqueId(), home.id(), player.getUniqueId());
+                    msg(player, "§a已邀请 " + target.getName() + "，有效期 "
+                            + plugin.mistConfig().inviteExpireSeconds() + " 秒");
+                    target.sendMessage(plugin.mistConfig().prefix()
+                            + "§b" + player.getName() + " 邀请你加入家园「" + home.name() + "」"
+                            + "，输入 §f/mh accept §b接受，/mh deny §b拒绝");
+                }, mainExecutor);
+    }
+
+    /** /mh accept —— 接受邀请成为 MEMBER */
+    private void cmdAccept(Player player) {
+        var homeId = plugin.invites().accept(player.getUniqueId());
+        if (homeId.isEmpty()) {
+            msg(player, "§c没有有效邀请");
+            return;
+        }
+        CompletableFuture.supplyAsync(() -> plugin.homeService().storage()
+                        .findHomeById(homeId.get()))
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c该家园已被删除");
+                        return;
+                    }
+                    Home home = opt.get();
+                    plugin.homeService().cache(home);
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
+                            plugin.homeService().storage()
+                                    .setRole(home.id(), player.getUniqueId(), HomeRole.MEMBER));
+                    plugin.homeService().cacheRole(home.id(), player.getUniqueId(), HomeRole.MEMBER);
+                    msg(player, "§a已加入「" + home.name() + "」，输入 /mh visit "
+                            + Bukkit.getOfflinePlayer(home.owner()).getName() + " 参观");
+                }, mainExecutor);
+    }
+
+    /** /mh deny —— 拒绝邀请 */
+    private void cmdDeny(Player player) {
+        plugin.invites().deny(player.getUniqueId());
+        msg(player, "§7已拒绝邀请");
+    }
+
+    /** /mh members —— 打开成员管理菜单 */
+    private void cmdMembers(Player player) {
+        plugin.homeService().homeOfAsync(player.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c你还没有家园");
+                        return;
+                    }
+                    Home home = opt.get();
+                    HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
+                    dev.mist.home.gui.MembersMenu.open(plugin, player, home,
+                            role.canManageMembers());
+                }, mainExecutor);
+    }
+
+    /** /mh ban <玩家> —— OPERATOR+ 封禁玩家 */
+    private void cmdBan(Player player, String[] args) {
+        if (args.length < 2) {
+            msg(player, "§c用法：/mh ban <玩家>");
+            return;
+        }
+        banAction(player, args[1], true);
+    }
+
+    /** /mh unban <玩家> —— 解除封禁 */
+    private void cmdUnban(Player player, String[] args) {
+        if (args.length < 2) {
+            msg(player, "§c用法：/mh unban <玩家>");
+            return;
+        }
+        banAction(player, args[1], false);
+    }
+
+    private void banAction(Player player, String targetName, boolean ban) {
+        plugin.homeService().homeOfAsync(player.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c你还没有家园");
+                        return;
+                    }
+                    Home home = opt.get();
+                    HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
+                    if (!role.canBan()) {
+                        msg(player, "§c需要家园管理员权限");
+                        return;
+                    }
+                    Player online = Bukkit.getPlayerExact(targetName);
+                    OfflinePlayer target = online != null ? online
+                            : Bukkit.getOfflinePlayer(targetName);
+                    if (home.owner().equals(target.getUniqueId())) {
+                        msg(player, "§c不能对家园主操作");
+                        return;
+                    }
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        if (ban) {
+                            plugin.homeService().storage().ban(home.id(), target.getUniqueId());
+                        } else {
+                            plugin.homeService().storage().unban(home.id(), target.getUniqueId());
+                        }
+                        plugin.homeService().evictRole(home.id(), target.getUniqueId());
+                    });
+                    msg(player, ban ? "§a已封禁 " + targetName : "§a已解封 " + targetName);
+                    if (ban && online != null) {
+                        kickFromHome(online, home);
+                    }
+                }, mainExecutor);
+    }
+
+    /** 把被封禁玩家从家园区域送回主世界 */
+    private void kickFromHome(Player target, Home home) {
+        World world = target.getWorld();
+        if (!plugin.worldManager().isHomeWorld(world.getName())) {
+            return;
+        }
+        Optional<Home> at = plugin.homeService().homeAt(world,
+                target.getLocation().getBlockX(), target.getLocation().getBlockZ());
+        if (at.isPresent() && at.get().id() == home.id()) {
+            World fallback = Bukkit.getWorlds().stream()
+                    .filter(w -> !plugin.worldManager().isHomeWorld(w.getName()))
+                    .findFirst().orElse(null);
+            if (fallback != null) {
+                target.teleport(fallback.getSpawnLocation());
+            }
+        }
+    }
+
+    /** /mh gui —— 打开家园主菜单 */
+    private void cmdGui(Player player) {
+        plugin.homeService().homeOfAsync(player.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c你还没有家园，输入 /mh create 创建");
+                        return;
+                    }
+                    new dev.mist.home.gui.MainMenu(plugin, player, opt.get()).open(player);
                 }, mainExecutor);
     }
 

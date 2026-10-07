@@ -7,6 +7,7 @@ import dev.mist.home.boundary.BorderService;
 import dev.mist.home.command.MistHomeCommand;
 import dev.mist.home.config.MistConfig;
 import dev.mist.home.economy.EconomyService;
+import dev.mist.home.gui.MenuListener;
 import dev.mist.home.home.HomeService;
 import dev.mist.home.invite.InviteManager;
 import dev.mist.home.protect.ProtectionListener;
@@ -82,6 +83,7 @@ public final class MistHomePlugin extends JavaPlugin {
 
         // 监听器
         Bukkit.getPluginManager().registerEvents(new ProtectionListener(this, homeService), this);
+        Bukkit.getPluginManager().registerEvents(new MenuListener(), this);
 
         // 命令
         PluginCommand cmd = getCommand("misthome");
