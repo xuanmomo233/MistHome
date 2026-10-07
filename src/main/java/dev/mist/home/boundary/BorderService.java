@@ -53,6 +53,10 @@ public class BorderService implements Listener {
             plugin.getLogger().info("已检测到 ProtocolLib，使用世界边界包显示家园范围");
         } else {
             plugin.getLogger().info("未检测到 ProtocolLib，边界降级为粒子显示");
+        }
+        // 粒子兜底：PL 包可能因客户端时序丢帧看不到，强制粒子模式或
+        // 无 PL 时都启用粒子任务（PL 模式下粒子默认关闭，可强制叠加显示）
+        if (!protocolLibAvailable || plugin.mistConfig().forceParticles()) {
             startParticleTask();
         }
     }
@@ -88,9 +92,21 @@ public class BorderService implements Listener {
         HomeService hs = plugin.homeService();
         Optional<Home> opt = hs.homeAt(loc.getWorld(), loc.getBlockX(), loc.getBlockZ());
         HomeRegion region = opt.flatMap(hs::regionOf).orElse(null);
-        boolean inside = region != null && region.containsUsable(loc.getX(), loc.getZ());
+        // 进入可用区即显示；在槽位缓冲带内接近可用边缘（approach 距离）也提前显示，
+        // 避免玩家从虚空走近时踩线才弹出边界的"延迟感"
+        double dist = region == null ? Double.MAX_VALUE
+                : distToUsable(region, loc.getX(), loc.getZ());
+        boolean inside = dist <= plugin.mistConfig().approachDistance();
 
         Home current = shown.get(player.getUniqueId());
+        if (plugin.mistConfig().borderDebug()) {
+            plugin.getLogger().info("[边界调试] " + player.getName()
+                    + " @(" + loc.getBlockX() + "," + loc.getBlockZ() + ")"
+                    + " world=" + loc.getWorld().getName()
+                    + " home=" + opt.map(h -> String.valueOf(h.id())).orElse("无")
+                    + " dist=" + (dist == Double.MAX_VALUE ? "∞" : (int) dist)
+                    + " inside=" + inside + " 已显示=" + (current != null));
+        }
         if (inside) {
             Home home = opt.get();
             if (current == null || current.id() != home.id()) {
@@ -101,6 +117,13 @@ public class BorderService implements Listener {
             clearBorder(player);
             shown.remove(player.getUniqueId());
         }
+    }
+
+    /** 到可用区的切比雪夫距离（在区内返回 0） */
+    private static double distToUsable(HomeRegion r, double x, double z) {
+        double dx = Math.max(0, Math.max(r.usableMinX() - x, x - r.usableMaxX()));
+        double dz = Math.max(0, Math.max(r.usableMinZ() - z, z - r.usableMaxZ()));
+        return Math.max(dx, dz);
     }
 
     private void showBorder(Player player, Home home, HomeRegion region) {
@@ -190,6 +213,18 @@ public class BorderService implements Listener {
         }
         // 跨世界传送后刷新（含进入/离开家园世界）
         update(e.getPlayer(), to);
+        // 跨维度时客户端可能尚未完成世界切换，边界包落在旧维度被丢弃
+        // —— 延迟强制重发（必须先清 shown 缓存，否则同家园判定会跳过发包）。
+        // 5t 覆盖正常切换，15t 兜底 Mohist 上较慢的区块流/维度同步
+        Player p = e.getPlayer();
+        for (long delay : new long[]{5L, 15L}) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (p.isOnline()) {
+                    shown.remove(p.getUniqueId());
+                    update(p, p.getLocation());
+                }
+            }, delay);
+        }
     }
 
     @EventHandler

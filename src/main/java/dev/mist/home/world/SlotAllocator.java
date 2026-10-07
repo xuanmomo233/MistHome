@@ -13,7 +13,7 @@ import java.util.OptionalInt;
  *   cols       = floor(sqrt(homesPerWorld))
  *   gridX      = innerIndex % cols
  *   gridZ      = innerIndex / cols
- *   gridOrigin = -cols * slotSize / 2            （网格整体以原点为中心）
+ *   gridOrigin = slotSize                        （网格整体离开世界出生点区域）
  *   slotMinX   = gridOrigin + gridX * slotSize
  *   centerX    = slotMinX + slotSize/2
  *   regionBase = slotMin / 512                    （槽位占 (slotSize/512)^2 个 region）
@@ -49,9 +49,14 @@ public final class SlotAllocator {
         return inner / cols(homesPerWorld);
     }
 
-    /** 网格原点（中心对称铺开） */
+    /**
+     * 网格原点：从 +slotSize 起向正坐标铺开。
+     * 世界出生点 (0,0) 的预生成 region 文件必须落在所有槽位之外——
+     * 若网格包含原点，出生点区块会写进多个槽位的 region，
+     * slotFilesExist 磁盘检查会把这些槽位误判为"已被写过"。
+     */
     public static int gridOrigin(int homesPerWorld, int slotSize) {
-        return -cols(homesPerWorld) * slotSize / 2;
+        return slotSize;
     }
 
     /** 槽位最小方块角 */

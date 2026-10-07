@@ -173,12 +173,13 @@ public class TeleportService implements Listener {
     }
 
     private void interrupt(UUID player, String reason) {
-        if (warmups.remove(player) != null) {
+        BukkitTask task = warmups.remove(player);
+        if (task != null) {
+            task.cancel();
             Player p = Bukkit.getPlayer(player);
             if (p != null) {
                 p.sendMessage(plugin.mistConfig().prefix() + "§c传送已打断：" + reason);
             }
-            cancelWarmup(player);
         }
     }
 

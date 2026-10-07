@@ -236,6 +236,21 @@ public class MistConfig {
         return config.getInt("boundary.particle-interval-ticks", 20);
     }
 
+    /** 强制叠加粒子边界（PL 发包不可见时排障用） */
+    public boolean forceParticles() {
+        return config.getBoolean("boundary.force-particles", false);
+    }
+
+    /** 边界判定调试日志 */
+    /** 距可用区边缘多少格内提前显示边界 */
+    public int approachDistance() {
+        return config.getInt("boundary.approach-distance", 24);
+    }
+
+    public boolean borderDebug() {
+        return config.getBoolean("boundary.debug", false);
+    }
+
     // ---------- visit ----------
 
     public int inviteExpireSeconds() {

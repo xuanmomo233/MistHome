@@ -88,6 +88,12 @@ template:
 boundary:
   # 优先 ProtocolLib 世界边界包；未安装自动降级粒子边界
   prefer-protocollib: true
+  # 已安装 PL 时仍叠加粒子边界（PL 发包不可见时的排障/双保险开关）
+  force-particles: false
+  # 边界判定调试日志
+  debug: false
+  # 距可用区边缘多少格内提前显示边界（避免踩线才弹出的延迟感）
+  approach-distance: 24
   # 粒子边界刷新周期（tick）
   particle-interval-ticks: 20
 

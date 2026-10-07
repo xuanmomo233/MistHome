@@ -24,19 +24,19 @@ class SlotAllocatorTest {
     }
 
     @Test
-    void gridCenteredAtOrigin() {
-        // 4x4 网格，原点居中：origin = -4*1024/2 = -2048
-        assertEquals(-2048, SlotAllocator.gridOrigin(HPW, SLOT));
-        // slot 0 = (gx0, gz0) 最小角 (-2048, -2048)，中心 (-1536, -1536)
-        assertEquals(-2048, SlotAllocator.slotMinX(0, HPW, SLOT));
-        assertEquals(-2048, SlotAllocator.slotMinZ(0, HPW, SLOT));
+    void gridOffsetFromWorldSpawn() {
+        // 网格从 +slotSize 起铺：origin = 1024，世界出生点 (0,0) 在所有槽位之外
+        assertEquals(1024, SlotAllocator.gridOrigin(HPW, SLOT));
+        // slot 0 = (gx0, gz0) 最小角 (1024, 1024)，中心 (1536, 1536)
+        assertEquals(1024, SlotAllocator.slotMinX(0, HPW, SLOT));
+        assertEquals(1024, SlotAllocator.slotMinZ(0, HPW, SLOT));
         HomeRegion r0 = SlotAllocator.regionOf(0, HPW, SLOT, 100);
-        assertEquals(-1536, r0.centerX());
-        assertEquals(-1536, r0.centerZ());
-        // slot 15 = (gx3, gz3)，中心 (1536, 1536)
+        assertEquals(1536, r0.centerX());
+        assertEquals(1536, r0.centerZ());
+        // slot 15 = (gx3, gz3)，中心 (4608, 4608)
         HomeRegion r15 = SlotAllocator.regionOf(15, HPW, SLOT, 100);
-        assertEquals(1536, r15.centerX());
-        assertEquals(1536, r15.centerZ());
+        assertEquals(4608, r15.centerX());
+        assertEquals(4608, r15.centerZ());
     }
 
     @Test
@@ -47,12 +47,12 @@ class SlotAllocatorTest {
             assertEquals(0, SlotAllocator.slotMinZ(s, HPW, SLOT) % 512);
         }
         assertEquals(2, SlotAllocator.regionSpan(SLOT));
-        // slot0 基 region (-4,-4)，覆盖 r(-4..-3, -4..-3)
-        assertEquals(-4, SlotAllocator.regionBaseX(0, HPW, SLOT));
-        assertEquals(-4, SlotAllocator.regionBaseZ(0, HPW, SLOT));
-        // slot15 基 region (2,2)，覆盖 r(2..3, 2..3)
-        assertEquals(2, SlotAllocator.regionBaseX(15, HPW, SLOT));
-        assertEquals(2, SlotAllocator.regionBaseZ(15, HPW, SLOT));
+        // slot0 基 region (2,2)，覆盖 r(2..3, 2..3)
+        assertEquals(2, SlotAllocator.regionBaseX(0, HPW, SLOT));
+        assertEquals(2, SlotAllocator.regionBaseZ(0, HPW, SLOT));
+        // slot15 基 region (8,8)，覆盖 r(8..9, 8..9)
+        assertEquals(8, SlotAllocator.regionBaseX(15, HPW, SLOT));
+        assertEquals(8, SlotAllocator.regionBaseZ(15, HPW, SLOT));
     }
 
     @Test
@@ -66,17 +66,18 @@ class SlotAllocatorTest {
         }
         // 跨世界
         assertEquals(16 + 5, SlotAllocator.slotIndexAt(
-                1, HPW, SLOT, -1536 + 1024, -1536 + 1024).orElseThrow());
+                1, HPW, SLOT, 1536 + 1024, 1536 + 1024).orElseThrow());
     }
 
     @Test
     void slotIndexAtBoundaryAndOutside() {
         // 槽位边界半开区间：min 属于本槽位，max 属于邻居
-        assertEquals(1, SlotAllocator.slotIndexAt(0, HPW, SLOT, -1024, -2048)
+        assertEquals(1, SlotAllocator.slotIndexAt(0, HPW, SLOT, 2048, 1024)
                 .orElseThrow());
-        // 网格外
-        assertTrue(SlotAllocator.slotIndexAt(0, HPW, SLOT, -2049, 0).isEmpty());
-        assertTrue(SlotAllocator.slotIndexAt(0, HPW, SLOT, 2048, 0).isEmpty());
+        // 世界出生点不属于任何槽位
+        assertTrue(SlotAllocator.slotIndexAt(0, HPW, SLOT, 0, 0).isEmpty());
+        assertTrue(SlotAllocator.slotIndexAt(0, HPW, SLOT, 1023, 1024).isEmpty());
+        assertTrue(SlotAllocator.slotIndexAt(0, HPW, SLOT, 5120, 1024).isEmpty());
     }
 
     @Test

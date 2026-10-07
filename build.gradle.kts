@@ -19,9 +19,12 @@ repositories {
     mavenCentral()
     // Spigot API（Mohist 实现的是 Bukkit/Spigot 层，不用 paper-api）
     maven("https://hub.spigotmc.org/nexus/content/repositories/snapshots/")
-    // Vault
+    // Vault + querz-nbt（JitPack 发布）
     maven("https://jitpack.io") {
-        content { includeGroup("com.github.MilkBowl") }
+        content {
+            includeGroup("com.github.MilkBowl")
+            includeGroup("com.github.Querz")
+        }
     }
     // WorldEdit（worldedit-libs 等子组也要放行）
     maven("https://maven.enginehub.org/repo/") {
@@ -46,6 +49,8 @@ dependencies {
     implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("org.xerial:sqlite-jdbc:3.45.3.0")            // 不重定位，避免 native 资源路径错位
     implementation("com.mysql:mysql-connector-j:8.2.0")          // 保留 protobuf-java 等传递依赖
+    // NBT 读写：换槽位恢复时重写 mca 内实体绝对坐标（region 容器自实现，querz 只做 NBT 层）
+    implementation("com.github.Querz:NBT:6.1")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
@@ -81,6 +86,7 @@ tasks.shadowJar {
     // org.sqlite 不重定位：sqlite-jdbc 的 native 库资源路径与类包强关联，重定位后可能加载失败
     relocate("com.mysql", "dev.mist.home.libs.mysql")
     relocate("com.google.protobuf", "dev.mist.home.libs.protobuf")  // mysql-connector-j 的传递依赖
+    relocate("net.querz", "dev.mist.home.libs.querz")
     mergeServiceFiles()
 }
 

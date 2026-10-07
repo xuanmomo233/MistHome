@@ -126,7 +126,7 @@ public class HomeArchiveService {
             }
             writeMeta(homeDir.resolve("meta.json"),
                     new Meta(home.id(), home.owner().toString(), copied,
-                            System.currentTimeMillis()));
+                            System.currentTimeMillis(), baseX, baseZ));
         } catch (IOException e) {
             plugin.getLogger().log(Level.WARNING,
                     "归档家园失败 home=" + home.id() + " world=" + worldDir.getName(), e);
@@ -151,6 +151,22 @@ public class HomeArchiveService {
         int baseZ = SlotAllocator.regionBaseZ(slotIndex, cfg.homesPerWorld(), cfg.slotSize());
         int span = SlotAllocator.regionSpan(cfg.slotSize());
 
+        // 归档时记录的物理基坐标 -> 换槽位时需要平移文件内绝对坐标
+        Meta meta = readMeta(homeDir);
+        Integer savedX = meta != null ? meta.regionBaseX() : null;
+        Integer savedZ = meta != null ? meta.regionBaseZ() : null;
+        int dRegX = savedX != null ? baseX - savedX : 0;
+        int dRegZ = savedZ != null ? baseZ - savedZ : 0;
+        if (dRegX != 0 || dRegZ != 0) {
+            plugin.getLogger().info("家园换槽位：实体/POI 坐标随文件平移 home=" + home.id()
+                    + " dRegion=(" + dRegX + "," + dRegZ + ")"
+                    + " dBlock=(" + dRegX * 512 + "," + dRegZ * 512 + ")");
+        }
+        if ((meta == null || savedX == null || savedZ == null)
+                && Files.exists(homeDir.resolve("region"))) {
+            plugin.getLogger().info("家园存档缺少 region 基坐标记录，跳过实体坐标平移 home=" + home.id());
+        }
+
         try {
             for (String sub : SUB_DIRS) {
                 Path subDir = homeDir.resolve(sub);
@@ -170,6 +186,10 @@ public class HomeArchiveService {
                         }
                         Files.createDirectories(dst.getParentFile().toPath());
                         Files.copy(src, dst.toPath());
+                        if (dRegX != 0 || dRegZ != 0) {
+                            // 文件内实体 Pos / POI / 方块实体坐标同步平移到新槽位
+                            RegionRelocator.relocateFile(dst, sub, dRegX, dRegZ, plugin.getLogger());
+                        }
                     }
                 }
             }
@@ -191,7 +211,13 @@ public class HomeArchiveService {
 
     // ---------- 元数据 ----------
 
-    private record Meta(long homeId, String owner, List<String> files, long archivedAt) {
+    /**
+     * @param regionBaseX 归档时家园所在槽位的 region 基坐标 X（Integer 可空：旧存档无此字段时
+     *                    gson 反序列化为 null，恢复时按"无平移"处理并打日志）
+     * @param regionBaseZ 同上 Z
+     */
+    private record Meta(long homeId, String owner, List<String> files, long archivedAt,
+                        Integer regionBaseX, Integer regionBaseZ) {
     }
 
     private void writeMeta(Path metaFile, Meta meta) throws IOException {
@@ -259,7 +285,10 @@ public class HomeArchiveService {
                     continue;
                 }
                 Integer inner = innerSlotOfRegion(rx, rz, hpw, slotSize);
-                Long homeId = inner == null ? null : slotHomeMap.get(inner);
+                if (inner == null) {
+                    continue;   // 网格外文件（世界出生点等基础设施），不是家园数据
+                }
+                Long homeId = slotHomeMap.get(inner);
                 Home home = homeId == null ? null : homeLookup.apply(homeId);
                 if (home != null) {
                     // 台账知道这家园停在这 -> 最新数据归档回插件目录
@@ -274,15 +303,15 @@ public class HomeArchiveService {
         }
     }
 
-    /** region 坐标 -> 世界内槽位号（槽内任一 region 都映射回所属槽位） */
+    /** region 坐标 -> 世界内槽位号（网格外 region 如出生点文件返回 null） */
     private Integer innerSlotOfRegion(int rx, int rz, int hpw, int slotSize) {
         int cols = SlotAllocator.cols(hpw);
         int origin = SlotAllocator.gridOrigin(hpw, slotSize);
-        // region -> 方块坐标 -> 槽位网格
+        // region -> 方块坐标 -> 槽位网格；floorDiv 避免负坐标向零截断
         int blockX = rx * SlotAllocator.REGION_SIZE;
         int blockZ = rz * SlotAllocator.REGION_SIZE;
-        int gx = (blockX - origin) / slotSize;
-        int gz = (blockZ - origin) / slotSize;
+        int gx = Math.floorDiv(blockX - origin, slotSize);
+        int gz = Math.floorDiv(blockZ - origin, slotSize);
         if (gx < 0 || gx >= cols || gz < 0 || gz >= cols) {
             return null;
         }
@@ -302,8 +331,28 @@ public class HomeArchiveService {
         try {
             Files.createDirectories(dst.getParent());
             Files.copy(f.toPath(), dst, StandardCopyOption.REPLACE_EXISTING);
+            // 崩溃归档也登记 region 基坐标，否则恢复时拿不到平移基准
+            mergeMeta(home, sub + "/r." + (rx - baseX) + "." + (rz - baseZ) + ".mca", baseX, baseZ);
         } catch (IOException e) {
             plugin.getLogger().log(Level.WARNING, "崩溃归档单文件失败: " + f.getPath(), e);
+        }
+    }
+
+    /** 合并写 meta：保留已有文件清单，更新 region 基坐标为本次物理槽位 */
+    private void mergeMeta(Home home, String file, int baseX, int baseZ) {
+        Path homeDir = homeDir(home);
+        Meta old = readMeta(homeDir);
+        List<String> files = new ArrayList<>(
+                old != null && old.files() != null ? old.files() : List.of());
+        if (!files.contains(file)) {
+            files.add(file);
+        }
+        try {
+            writeMeta(homeDir.resolve("meta.json"),
+                    new Meta(home.id(), home.owner().toString(), files,
+                            System.currentTimeMillis(), baseX, baseZ));
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING, "写 meta.json 失败: " + homeDir, e);
         }
     }
 
