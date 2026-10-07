@@ -45,7 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * 判定链：坐标 → 家园（homeAt）→ 可用范围（containsUsable）→ 角色权限。
  * <ul>
- *   <li>家园世界内不在任何槽位上（gap/未分配/网格外）→ 全部拒绝</li>
+ *   <li>家园世界内不在任何已停放槽位上（空闲/未分配/网格外）→ 全部拒绝</li>
  *   <li>槽位内但超出当前档可用范围（预留区）→ 全部拒绝（含 Owner）</li>
  *   <li>可用范围内 → 按角色：BUILD 需 MEMBER+，VISIT 需非 BANNED 且（公开或成员）</li>
  * </ul>
@@ -77,12 +77,12 @@ public class ProtectionListener implements Listener {
         }
         Optional<Home> opt = homeService.homeAt(w, loc.getBlockX(), loc.getBlockZ());
         if (opt.isEmpty()) {
-            return false;   // gap 隔离带 / 未分配槽位 / 超出网格
+            return false;   // 空闲槽位 / 未分配槽位 / 超出网格
         }
         Home home = opt.get();
-        HomeRegion region = homeService.regionOf(home);
-        if (!region.containsUsable(loc.getX(), loc.getZ())) {
-            return false;   // 预留区（未解锁范围）
+        HomeRegion region = homeService.regionOf(home).orElse(null);
+        if (region == null || !region.containsUsable(loc.getX(), loc.getZ())) {
+            return false;   // 预留区（未解锁范围）/ 停放状态异常
         }
         HomeRole role = homeService.roleOf(home, player.getUniqueId());
         return switch (perm) {
@@ -104,8 +104,9 @@ public class ProtectionListener implements Listener {
         if (opt.isEmpty()) {
             return false;
         }
-        HomeRegion region = homeService.regionOf(opt.get());
-        return region.containsUsable(loc.getX(), loc.getZ());
+        return homeService.regionOf(opt.get())
+                .map(r -> r.containsUsable(loc.getX(), loc.getZ()))
+                .orElse(false);
     }
 
     /**
@@ -121,7 +122,7 @@ public class ProtectionListener implements Listener {
                 continue;   // 非家园世界的点忽略
             }
             Optional<Home> opt = homeService.homeAt(w, loc.getBlockX(), loc.getBlockZ());
-            HomeRegion region = opt.map(homeService::regionOf).orElse(null);
+            HomeRegion region = opt.flatMap(homeService::regionOf).orElse(null);
             boolean inside = region != null
                     && region.containsUsable(loc.getX(), loc.getZ());
             if (inside) {

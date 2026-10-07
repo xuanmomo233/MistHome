@@ -27,16 +27,15 @@ public class MistConfig {
         if (list.isEmpty()) {
             return;
         }
-        int maxRadius = slotSize() / 2;
         List<HomeTier> parsed = new ArrayList<>();
         for (Map<?, ?> map : list) {
             int level = intOf(map.get("level"), parsed.size());
             Object nameObj = map.get("name");
             String name = nameObj != null ? String.valueOf(nameObj) : "档位" + level;
             int radius = intOf(map.get("radius"), 64);
-            if (radius > maxRadius) {
+            if (radius > slotSize() / 2) {
                 throw new IllegalArgumentException("tiers." + level + ".radius (" + radius
-                        + ") 超过 slot-size/2 上限 (" + maxRadius + ")");
+                        + ") 超过 slot-size/2 上限 (" + slotSize() / 2 + ")");
             }
             double price = map.get("upgrade-price") instanceof Number n ? n.doubleValue() : 0;
             parsed.add(new HomeTier(level, name, radius, price));
@@ -45,19 +44,38 @@ public class MistConfig {
         this.tiers = List.copyOf(parsed);
     }
 
-    /** 校验关键配置：家园数/网格、档位半径等 */
+    /** 校验关键配置：家园数/网格、槽位对齐、档位半径等 */
     public void validate() {
         int hpw = homesPerWorld();
         int root = (int) Math.round(Math.sqrt(hpw));
         if (root * root != hpw) {
             throw new IllegalArgumentException("world.homes-per-world 必须是完全平方数（当前：" + hpw + "）");
         }
-        if (slotSize() < 2) {
-            throw new IllegalArgumentException("world.slot-size 必须 >= 2");
+        // 槽位必须对齐 region 文件边界（512 的倍数），家园数据才能独占 mca 文件组
+        if (slotSize() % 512 != 0 || slotSize() < 512) {
+            throw new IllegalArgumentException("world.slot-size 必须是 512 的倍数（region 对齐），当前：" + slotSize());
         }
         if (tiers.isEmpty()) {
             throw new IllegalArgumentException("tiers 配置不能为空");
         }
+    }
+
+    /**
+     * 槽位内边缘留白 = slotSize/2 - maxTierRadius。
+     * 小于模拟距离（160）时，玩家走到可用区边缘会把邻居空槽区块虚空生成进内存。
+     */
+    public int slotMargin() {
+        return slotSize() / 2 - maxTier().radius();
+    }
+
+    /** 模拟距离（区块），用于污染判定与隔离告警 */
+    public int simulationDistanceChunks() {
+        return config.getInt("world.simulation-distance", 10);
+    }
+
+    /** 模拟距离（格） */
+    public int simulationDistanceBlocks() {
+        return simulationDistanceChunks() * 16;
     }
 
     private static int intOf(Object o, int def) {
@@ -70,16 +88,42 @@ public class MistConfig {
         return config.getString("world.name-prefix", "misthome_");
     }
 
+    /** 固定指定的家园世界名列表（有序，索引即 worldIndex） */
+    public List<String> poolWorldNames() {
+        return config.getStringList("world.worlds");
+    }
+
+    /** 池满时是否自动生成新家园世界 */
+    public boolean autoGrow() {
+        return config.getBoolean("world.auto-grow", true);
+    }
+
+    /** 世界池容量上限（含自动生成），0 = 不限 */
+    public int maxWorlds() {
+        return config.getInt("world.max-worlds", 16);
+    }
+
+    /** 池世界环境 */
+    public org.bukkit.World.Environment environment() {
+        String s = config.getString("world.environment", "NORMAL");
+        try {
+            return org.bukkit.World.Environment.valueOf(s.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return org.bukkit.World.Environment.NORMAL;
+        }
+    }
+
+    /** 停放台账文件名（相对插件数据文件夹） */
+    public String poolStateFile() {
+        return config.getString("world.pool-state-file", "pool-state.json");
+    }
+
     public int homesPerWorld() {
-        return Math.max(1, config.getInt("world.homes-per-world", 64));
+        return Math.max(1, config.getInt("world.homes-per-world", 16));
     }
 
     public int slotSize() {
-        return config.getInt("world.slot-size", 512);
-    }
-
-    public int gap() {
-        return config.getInt("world.gap", 64);
+        return config.getInt("world.slot-size", 1024);
     }
 
     public int unloadDelaySeconds() {
@@ -88,6 +132,18 @@ public class MistConfig {
 
     public int sweepIntervalSeconds() {
         return config.getInt("world.sweep-interval-seconds", 20);
+    }
+
+    // ---------- archive ----------
+
+    /** 家园存档根目录（相对插件数据文件夹） */
+    public String archiveDir() {
+        return config.getString("archive.dir", "homes");
+    }
+
+    /** 归档成功后是否删除世界文件夹 */
+    public boolean deleteWorldOnUnload() {
+        return config.getBoolean("archive.delete-world-on-unload", true);
     }
 
     // ---------- tiers ----------

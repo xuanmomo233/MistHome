@@ -48,6 +48,7 @@ public final class MistHomePlugin extends JavaPlugin {
             Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
+        warnIsolation();
 
         // 存储层
         storage = "mysql".equalsIgnoreCase(mistConfig.storageType())
@@ -60,12 +61,12 @@ public final class MistHomePlugin extends JavaPlugin {
             return;
         }
 
-        // 世界管理（副本式加载/卸载）
+        // 家园领域服务（世界池启动时的崩溃核对依赖它）
+        homeService = new HomeService(this, storage);
+
+        // 世界池管理（停放台账/按需加载/卸载归档）
         worldManager = new HomeWorldManager(this);
         worldManager.start();
-
-        // 家园领域服务
-        homeService = new HomeService(this, storage);
 
         // 软依赖钩子
         economy = new EconomyService(this);
@@ -109,6 +110,22 @@ public final class MistHomePlugin extends JavaPlugin {
         }
         if (storage != null) {
             storage.close();
+        }
+    }
+
+    /**
+     * 隔离告警：相邻家园可用区域边缘距离 = slotSize - 2*maxRadius。
+     * 小于模拟距离时，两家园贴边的机械会互相加载 tick。
+     */
+    private void warnIsolation() {
+        int simDist = mistConfig.simulationDistanceChunks() * 16;
+        int margin = mistConfig.slotSize() - 2 * mistConfig.maxTier().radius();
+        if (margin < simDist) {
+            getLogger().warning("相邻家园可用区域边缘距离仅 " + margin + " 格"
+                    + "，小于模拟距离 " + simDist + " 格（simulation-distance="
+                    + mistConfig.simulationDistanceChunks() + "）。"
+                    + "两家贴边时机械/红石会互相加载，且空槽可能被污染。"
+                    + "建议调低家园最大档半径或增大槽位边长。");
         }
     }
 

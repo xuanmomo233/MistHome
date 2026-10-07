@@ -24,13 +24,9 @@ import java.util.logging.Level;
 /**
  * 家园领域服务：内存缓存 + Storage 持久化（按需懒加载）。
  * <p>
- * 缓存策略：
- * <ul>
- *   <li>读路径零阻塞：所有查询先查缓存，未命中异步回填并返回空结果</li>
- *   <li>世界加载时 {@link #warmWorld(int)} 批量预热该世界内全部家园，
- *       保证玩家落地前 homeAt 判定就绪</li>
- *   <li>DB 操作走专用线程池，永不阻塞主线程</li>
- * </ul>
+ * 世界池模型下，家园的物理位置由停放台账（worldManager.parkingOf）
+ * 决定；homeAt 反查走「坐标 -> 槽位 -> slotOwner -> homeId」链路。
+ * DB 操作走专用线程池，永不阻塞主线程。
  */
 public class HomeService {
 
@@ -42,8 +38,6 @@ public class HomeService {
     private final Map<UUID, Home> byOwner = new ConcurrentHashMap<>();
     /** homeId -> Home */
     private final Map<Long, Home> byId = new ConcurrentHashMap<>();
-    /** slotIndex -> Home（homeAt 反查索引） */
-    private final Map<Integer, Home> bySlot = new ConcurrentHashMap<>();
     /** homeId -> (playerUuid -> role)，角色懒加载缓存 */
     private final Map<Long, Map<UUID, HomeRole>> roleCache = new ConcurrentHashMap<>();
     /** 正在异步加载中的 key，防止重复查库 */
@@ -98,38 +92,40 @@ public class HomeService {
         }, dbExecutor);
     }
 
+    public Optional<Home> byId(long homeId) {
+        return Optional.ofNullable(byId.get(homeId));
+    }
+
     /**
      * 由世界坐标反查家园区域（用于保护判定，主线程热路径）。
-     * 纯内存：坐标 → slotIndex → bySlot 缓存。
-     * 未命中时异步预热该槽位后返回 empty；
-     * 世界加载时 warmWorld 已批量预热，正常路径不会 miss。
+     * 纯内存：坐标 → 内槽位 → 停放台账 → byId 缓存。
+     * 未命中（重启后台账恢复但缓存未预热）异步回填后返回 empty。
      */
     public Optional<Home> homeAt(World world, int x, int z) {
         int worldIndex = plugin.worldManager().parseWorldIndex(world.getName());
         if (worldIndex < 0) {
             return Optional.empty();
         }
-        var cfg = plugin.mistConfig();
-        var slotOpt = SlotAllocator.slotIndexAt(worldIndex, cfg.homesPerWorld(),
-                cfg.slotSize(), cfg.gap(), x, z);
-        if (slotOpt.isEmpty()) {
+        Long homeId = plugin.worldManager().homeIdAt(worldIndex, x, z);
+        if (homeId == null) {
             return Optional.empty();
         }
-        int slotIndex = slotOpt.getAsInt();
-        Home cached = bySlot.get(slotIndex);
+        Home cached = byId.get(homeId);
         if (cached != null) {
             return Optional.of(cached);
         }
-        warmSlot(slotIndex);
+        warmHome(homeId);
         return Optional.empty();
     }
 
-    /** 计算家园的当前区域信息 */
-    public HomeRegion regionOf(Home home) {
+    /**
+     * 家园当前可用区域（未停放返回 empty）。
+     * 位置由停放台账动态决定，随每次停放变化。
+     */
+    public Optional<HomeRegion> regionOf(Home home) {
         var cfg = plugin.mistConfig();
         int usable = cfg.tier(home.tierLevel()).radius();
-        return SlotAllocator.regionOf(home.slotIndex(), cfg.homesPerWorld(),
-                cfg.slotSize(), cfg.gap(), usable);
+        return plugin.worldManager().regionOf(home, usable);
     }
 
     /**
@@ -155,20 +151,17 @@ public class HomeService {
     // ---------- 创建（唯一索引 + 冲突重试） ----------
 
     /**
-     * 创建家园：异步执行。取最小空闲槽位后插入，
-     * slot_index 唯一冲突时换新槽位重试（多节点/并发安全）。
+     * 创建家园：异步执行。取最小空闲槽位号（仅作唯一序号，不决定物理位置）后插入，
+     * slot_index 唯一冲突时换号重试（多节点/并发安全）。
+     * 出生点初始为槽位中心偏移 (0.5, 65, 0.5)，粘贴后校正。
      */
     public CompletableFuture<Home> createHomeAsync(UUID owner, String name, String template) {
         return CompletableFuture.supplyAsync(() -> {
             for (int attempt = 0; attempt < CREATE_SLOT_MAX_RETRY; attempt++) {
                 int slot = storage.allocateSlot();
                 try {
-                    HomeRegion region = SlotAllocator.regionOf(slot,
-                            plugin.mistConfig().homesPerWorld(),
-                            plugin.mistConfig().slotSize(),
-                            plugin.mistConfig().gap(), 0);
                     Home home = storage.createHome(owner, name, slot, 0, template,
-                            region.centerX() + 0.5, 65.0, region.centerZ() + 0.5);
+                            0.5, 65.0, 0.5);
                     cache(home);
                     return home;
                 } catch (DuplicateKeyException e) {
@@ -188,13 +181,11 @@ public class HomeService {
     public void cache(Home home) {
         byOwner.put(home.owner(), home);
         byId.put(home.id(), home);
-        bySlot.put(home.slotIndex(), home);
     }
 
     public void evict(Home home) {
         byOwner.remove(home.owner());
         byId.remove(home.id());
-        bySlot.remove(home.slotIndex());
         roleCache.remove(home.id());
     }
 
@@ -212,36 +203,18 @@ public class HomeService {
 
     // ---------- 异步预热 ----------
 
-    /**
-     * 世界加载成功后批量预热该世界内全部家园，
-     * 消除玩家落地后 homeAt 的冷缓存窗口。
-     */
-    public void warmWorld(int worldIndex) {
-        int hpw = plugin.mistConfig().homesPerWorld();
-        int from = worldIndex * hpw;
-        int to = from + hpw;
-        CompletableFuture.runAsync(() -> {
-            for (Home home : storage.listHomesInSlots(from, to)) {
-                cache(home);
-            }
-        }, dbExecutor).exceptionally(t -> {
-            plugin.getLogger().log(Level.WARNING, "预热家园缓存失败 world=" + worldIndex, t);
-            return null;
-        });
-    }
-
-    private void warmSlot(int slotIndex) {
-        if (!pending.add("slot:" + slotIndex)) {
+    private void warmHome(long homeId) {
+        if (!pending.add("home:" + homeId)) {
             return;
         }
         CompletableFuture.runAsync(() -> {
             try {
-                storage.findHomeBySlot(slotIndex).ifPresent(this::cache);
+                storage.findHomeById(homeId).ifPresent(this::cache);
             } finally {
-                pending.remove("slot:" + slotIndex);
+                pending.remove("home:" + homeId);
             }
         }, dbExecutor).exceptionally(t -> {
-            plugin.getLogger().log(Level.WARNING, "预热槽位缓存失败 slot=" + slotIndex, t);
+            plugin.getLogger().log(Level.WARNING, "预热家园缓存失败 home=" + homeId, t);
             return null;
         });
     }

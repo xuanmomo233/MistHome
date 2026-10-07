@@ -22,7 +22,7 @@ public class MainMenu extends Menu {
         // 边框装饰
         ItemStackDeco(this);
         HomeTier tier = cfg.tier(home.tierLevel());
-        HomeRegion region = plugin.homeService().regionOf(home);
+        HomeRegion region = plugin.homeService().regionOf(home).orElse(null);
 
         item(20, Items.of(Material.ENDER_PEARL, "§a回家",
                 "§7传送到你的家园"), e ->
@@ -58,9 +58,10 @@ public class MainMenu extends Menu {
                 "§7在当前位置设置家园出生点"), e ->
                 ((Player) e.getWhoClicked()).performCommand("misthome setspawn"));
 
-        // 中心到中心的装饰信息
-        deco(4, Items.of(Material.PAPER, "§8家园中心 ("
-                + region.centerX() + ", " + region.centerZ() + ")"));
+        // 中心到中心的装饰信息（未停放时显示待机状态）
+        deco(4, Items.of(Material.PAPER, region == null
+                ? "§8家园待机中（回车后加载运行）"
+                : "§8家园中心 (" + region.centerX() + ", " + region.centerZ() + ")"));
     }
 
     private static void ItemStackDeco(Menu menu) {

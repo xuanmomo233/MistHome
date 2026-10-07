@@ -3,9 +3,9 @@ package dev.mist.home.world;
 /**
  * 家园区域几何信息（不可变值对象）。
  * <p>
- * 槽位（slot）为物理预留空间，边长 = slot-size；
+ * 槽位（slot）为物理预留空间，边长 = slot-size（region 文件对齐）；
  * 可用范围为以槽位中心为圆心、当前档 radius 为半径的正方形。
- * 相邻槽位之间另有 gap 间隔，保证区域互不接触。
+ * 槽位紧密排列，隔离靠槽内留白 margin = slotSize/2 - maxRadius。
  */
 public class HomeRegion {
 
@@ -54,7 +54,7 @@ public class HomeRegion {
 
     /**
      * 该坐标是否落在本家园的预留槽位内（含未解锁区域）。
-     * 半开区间，相邻槽位之间保持 gap 隔离。
+     * 半开区间，相邻槽位间无间隙。
      */
     public boolean containsSlot(double x, double z) {
         return x >= centerX - slotRadius && x < centerX + slotRadius

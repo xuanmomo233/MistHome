@@ -3,8 +3,10 @@ package dev.mist.home.model;
 import java.util.UUID;
 
 /**
- * 家园实体。槽位索引全局递增，所在世界 = slotIndex / homesPerWorld，
- * 世界内网格位置 = slotIndex % homesPerWorld。
+ * 家园实体。slotIndex 仅作全局唯一序号（DB 唯一约束），
+ * 物理位置由世界池停放台账动态决定。
+ * spawnX/Z 为相对槽位中心的偏移量（家园可停在任意槽位），
+ * spawnY 为绝对高度。
  */
 public class Home {
 
@@ -15,7 +17,7 @@ public class Home {
     private int tierLevel;
     private String template;
     private HomeVisibility visibility;
-    // 家园出生点（相对家园所在世界的绝对坐标）
+    // 家园出生点：spawnX/Z 相对槽位中心的偏移，spawnY 绝对高度
     private double spawnX;
     private double spawnY;
     private double spawnZ;

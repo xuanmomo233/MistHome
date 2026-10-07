@@ -3,20 +3,28 @@ package dev.mist.home.world;
 import java.util.OptionalInt;
 
 /**
- * 槽位分配几何计算。
+ * 槽位分配几何计算（region 文件对齐版）。
  * <p>
- * 全局槽位索引 slotIndex 递增分配：
+ * 槽位边长 slotSize 必须是 512 的倍数（对齐 .mca region 文件边界），
+ * 槽位之间紧密排列（无 gap，隔离靠槽内留白 margin 实现）。
  * <pre>
  *   worldIndex = slotIndex / homesPerWorld
  *   innerIndex = slotIndex % homesPerWorld
  *   cols       = floor(sqrt(homesPerWorld))
  *   gridX      = innerIndex % cols
  *   gridZ      = innerIndex / cols
- *   pitch      = slotSize + gap
- *   centerX    = (gridX - (cols - 1) / 2.0) * pitch   （网格整体以原点为中心对称铺开）
+ *   gridOrigin = -cols * slotSize / 2            （网格整体以原点为中心）
+ *   slotMinX   = gridOrigin + gridX * slotSize
+ *   centerX    = slotMinX + slotSize/2
+ *   regionBase = slotMin / 512                    （槽位占 (slotSize/512)^2 个 region）
  * </pre>
+ * 每个槽位独占整数个 region 文件：region/entities/poi 下
+ * r.rx.rz.mca（rx ∈ [regionBase, regionBase+span)）。
  */
 public final class SlotAllocator {
+
+    /** 一个 region 文件的边长（格） */
+    public static final int REGION_SIZE = 512;
 
     private SlotAllocator() {
     }
@@ -25,50 +33,87 @@ public final class SlotAllocator {
         return slotIndex / homesPerWorld;
     }
 
+    /** 每世界网格列数（homesPerWorld 需为完全平方数） */
+    public static int cols(int homesPerWorld) {
+        return (int) Math.floor(Math.sqrt(homesPerWorld));
+    }
+
+    /** 槽位在网格内的位置 */
+    public static int gridX(int slotIndex, int homesPerWorld) {
+        int inner = slotIndex % homesPerWorld;
+        return inner % cols(homesPerWorld);
+    }
+
+    public static int gridZ(int slotIndex, int homesPerWorld) {
+        int inner = slotIndex % homesPerWorld;
+        return inner / cols(homesPerWorld);
+    }
+
+    /** 网格原点（中心对称铺开） */
+    public static int gridOrigin(int homesPerWorld, int slotSize) {
+        return -cols(homesPerWorld) * slotSize / 2;
+    }
+
+    /** 槽位最小方块角 */
+    public static int slotMinX(int slotIndex, int homesPerWorld, int slotSize) {
+        return gridOrigin(homesPerWorld, slotSize) + gridX(slotIndex, homesPerWorld) * slotSize;
+    }
+
+    public static int slotMinZ(int slotIndex, int homesPerWorld, int slotSize) {
+        return gridOrigin(homesPerWorld, slotSize) + gridZ(slotIndex, homesPerWorld) * slotSize;
+    }
+
     /**
      * 由槽位索引计算家园区域。
      *
      * @param usableRadius 当前档可用半径
      */
     public static HomeRegion regionOf(int slotIndex, int homesPerWorld,
-                                      int slotSize, int gap, int usableRadius) {
+                                      int slotSize, int usableRadius) {
         int worldIndex = worldIndexOf(slotIndex, homesPerWorld);
-        int inner = slotIndex % homesPerWorld;
-        int cols = (int) Math.floor(Math.sqrt(homesPerWorld));
-        int gridX = inner % cols;
-        int gridZ = inner / cols;
-        int pitch = slotSize + gap;
-        int centerX = (int) Math.round((gridX - (cols - 1) / 2.0) * pitch);
-        int centerZ = (int) Math.round((gridZ - (cols - 1) / 2.0) * pitch);
-        return new HomeRegion(worldIndex, gridX, gridZ, centerX, centerZ, slotSize / 2, usableRadius);
+        int centerX = slotMinX(slotIndex, homesPerWorld, slotSize) + slotSize / 2;
+        int centerZ = slotMinZ(slotIndex, homesPerWorld, slotSize) + slotSize / 2;
+        return new HomeRegion(worldIndex, gridX(slotIndex, homesPerWorld),
+                gridZ(slotIndex, homesPerWorld), centerX, centerZ,
+                slotSize / 2, usableRadius);
+    }
+
+    /**
+     * 槽位占用的 region 文件基坐标（含 span 个 region）。
+     * region/entities/poi 三个目录下同名文件均为本家园数据。
+     */
+    public static int regionBaseX(int slotIndex, int homesPerWorld, int slotSize) {
+        return slotMinX(slotIndex, homesPerWorld, slotSize) / REGION_SIZE;
+    }
+
+    public static int regionBaseZ(int slotIndex, int homesPerWorld, int slotSize) {
+        return slotMinZ(slotIndex, homesPerWorld, slotSize) / REGION_SIZE;
+    }
+
+    /** 槽位跨度（region 数/轴），slotSize=1024 -> 2 */
+    public static int regionSpan(int slotSize) {
+        return slotSize / REGION_SIZE;
     }
 
     /**
      * 坐标反查：给定世界内坐标，计算其落在哪个槽位。
-     * 落在槽位之间的 gap 隔离带上时返回 empty（无主之地）。
+     * 无 gap 概念，落在网格内必属于某槽位；超出网格返回 empty。
      *
      * @param worldIndex 世界索引（misthome_N 中的 N）
      */
     public static OptionalInt slotIndexAt(int worldIndex, int homesPerWorld,
-                                          int slotSize, int gap, double x, double z) {
-        int cols = (int) Math.floor(Math.sqrt(homesPerWorld));
-        double pitch = slotSize + gap;
-        // 与 regionOf 相反方向推回网格坐标
-        int gridX = (int) Math.round(x / pitch + (cols - 1) / 2.0);
-        int gridZ = (int) Math.round(z / pitch + (cols - 1) / 2.0);
-        if (gridX < 0 || gridX >= cols || gridZ < 0 || gridZ >= cols) {
+                                          int slotSize, double x, double z) {
+        int cols = cols(homesPerWorld);
+        int origin = gridOrigin(homesPerWorld, slotSize);
+        int gx = (int) Math.floor((x - origin) / slotSize);
+        int gz = (int) Math.floor((z - origin) / slotSize);
+        if (gx < 0 || gx >= cols || gz < 0 || gz >= cols) {
             return OptionalInt.empty();
         }
-        int inner = gridZ * cols + gridX;
+        int inner = gz * cols + gx;
         if (inner >= homesPerWorld) {
             return OptionalInt.empty();
         }
-        int slotIndex = worldIndex * homesPerWorld + inner;
-        // 边界校验：坐标必须落在槽位半开区间 [min, max) 内，gap 带不算槽位
-        HomeRegion probe = regionOf(slotIndex, homesPerWorld, slotSize, gap, 0);
-        if (!probe.containsSlot(x, z)) {
-            return OptionalInt.empty();
-        }
-        return OptionalInt.of(slotIndex);
+        return OptionalInt.of(worldIndex * homesPerWorld + inner);
     }
 }

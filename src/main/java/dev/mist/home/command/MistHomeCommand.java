@@ -162,13 +162,19 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                 }, mainExecutor);
     }
 
-    /** 创建流程后半段：加载世界 -> 粘模板 -> 传送（均回调主线程） */
+    /** 创建流程后半段：停放家园 -> 粘模板 -> 传送（均回调主线程） */
     private void finishCreate(Player player, Home home, String template, double price) {
-        int worldIndex = SlotAllocator.worldIndexOf(home.slotIndex(),
-                plugin.mistConfig().homesPerWorld());
-        plugin.worldManager().ensureLoaded(worldIndex)
-                .thenAccept(world -> {
-                    HomeRegion region = plugin.homeService().regionOf(home);
+        plugin.worldManager().ensureParked(home)
+                .thenAccept(p -> {
+                    World world = plugin.worldManager().worldOf(p);
+                    if (world == null) {
+                        msg(player, "§c家园世界加载失败");
+                        return;
+                    }
+                    var cfg = plugin.mistConfig();
+                    HomeRegion region = SlotAllocator.regionOf(
+                            p.globalSlot(cfg.homesPerWorld()), cfg.homesPerWorld(),
+                            cfg.slotSize(), 0);
                     plugin.templates().paste(template, world, region)
                             .thenRun(() -> {
                                 ensureSafeSpawn(world, region, home);
@@ -186,7 +192,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                             });
                 })
                 .exceptionally(t -> {
-                    msg(player, "§c家园世界加载失败：" + t.getMessage());
+                    msg(player, "§c家园停放失败：" + t.getMessage());
                     return null;
                 });
     }
@@ -205,7 +211,8 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
         }
         double safeY = highest + 1;
         if (safeY != home.spawnY()) {
-            home.setSpawn(cx + 0.5, safeY, cz + 0.5, home.spawnYaw(), home.spawnPitch());
+            // spawnX/Z 是相对槽位中心的偏移，中心即偏移 0.5/0.5
+            home.setSpawn(0.5, safeY, 0.5, home.spawnYaw(), home.spawnPitch());
             Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
                     plugin.homeService().storage().updateHome(home));
         }
@@ -255,14 +262,17 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         return;
                     }
                     Home home = opt.get();
-                    HomeRegion region = plugin.homeService().regionOf(home);
+                    HomeRegion region = plugin.homeService().regionOf(home).orElse(null);
                     var loc = player.getLocation();
-                    if (!plugin.worldManager().isHomeWorld(loc.getWorld().getName())
+                    if (region == null
+                            || !plugin.worldManager().isHomeWorld(loc.getWorld().getName())
                             || !region.containsUsable(loc.getX(), loc.getZ())) {
                         msg(player, "§c必须站在自己家园的可用范围内设置出生点");
                         return;
                     }
-                    home.setSpawn(loc.getX(), loc.getY(), loc.getZ(),
+                    // 存相对槽位中心的偏移（家园可停放在任意槽位）
+                    home.setSpawn(loc.getX() - region.centerX(), loc.getY(),
+                            loc.getZ() - region.centerZ(),
                             loc.getYaw(), loc.getPitch());
                     plugin.homeService().storage().updateHome(home);
                     msg(player, "§a出生点已更新");
@@ -591,18 +601,28 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             msg(player, "§cworldIndex 必须是数字");
             return;
         }
+        if (index < 0 || index >= plugin.worldManager().poolWorlds().size()) {
+            msg(player, "§cworldIndex 超出范围（池大小 "
+                    + plugin.worldManager().poolWorlds().size() + "）");
+            return;
+        }
+        String name = plugin.worldManager().worldName(index);
         if (plugin.worldManager().forceUnload(index)) {
-            msg(player, "§a已触发卸载 misthome_" + index);
+            msg(player, "§a已触发卸载并归档 " + name);
         } else {
-            msg(player, "§c世界 misthome_" + index + " 未加载");
+            msg(player, "§c世界 " + name + " 未加载");
         }
     }
 
     private void adminInfo(Player player) {
-        msg(player, "§7已加载家园世界：§f" + plugin.worldManager().loadedCount()
-                + " §7| 存储：§f" + plugin.mistConfig().storageType()
+        msg(player, "§7存储：§f" + plugin.mistConfig().storageType()
+                + " §7| 池世界：§f" + plugin.worldManager().poolWorlds().size()
+                + "（已加载 " + plugin.worldManager().loadedCount() + "）"
                 + " §7| 每世界槽位：§f" + plugin.mistConfig().homesPerWorld()
-                + " §7| 槽位大小：§f" + plugin.mistConfig().slotSize());
+                + " §7| 槽位：§f" + plugin.mistConfig().slotSize() + "格");
+        for (String line : plugin.worldManager().poolInfo().split("\n")) {
+            player.sendMessage(line);
+        }
     }
 
     private void sendHelp(Player player) {

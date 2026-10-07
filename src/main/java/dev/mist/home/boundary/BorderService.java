@@ -87,7 +87,7 @@ public class BorderService implements Listener {
     private void update(Player player, Location loc) {
         HomeService hs = plugin.homeService();
         Optional<Home> opt = hs.homeAt(loc.getWorld(), loc.getBlockX(), loc.getBlockZ());
-        HomeRegion region = opt.map(hs::regionOf).orElse(null);
+        HomeRegion region = opt.flatMap(hs::regionOf).orElse(null);
         boolean inside = region != null && region.containsUsable(loc.getX(), loc.getZ());
 
         Home current = shown.get(player.getUniqueId());
@@ -135,7 +135,11 @@ public class BorderService implements Listener {
                     shown.remove(entry.getKey());
                     continue;
                 }
-                HomeRegion region = plugin.homeService().regionOf(entry.getValue());
+                HomeRegion region = plugin.homeService()
+                        .regionOf(entry.getValue()).orElse(null);
+                if (region == null) {
+                    continue;
+                }
                 spawnBorderParticles(p, region);
             }
         }, interval, interval);

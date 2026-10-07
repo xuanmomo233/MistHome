@@ -1,6 +1,7 @@
 # ============================================================
 #  MistHome 配置
-#  世界架构：共享虚空世界分区，副本式按需加载/无人超时卸载
+#  世界架构：家园世界池 + 副本式按需停放/无人卸载归档
+#  家园数据以玩家为单位的 mca 文件存于插件目录，世界仅是运行时画布
 # ============================================================
 
 storage:
@@ -16,34 +17,51 @@ storage:
     use-ssl: false
 
 world:
-  # 家园世界命名前缀，实际世界名为 misthome_0、misthome_1 ...
+  # 家园世界命名前缀，自动生成的世界名为 misthome_0、misthome_1 ...
   name-prefix: "misthome_"
-  # 每个世界容纳的家园数量（按正方形网格开方取整，64 -> 8x8）
-  homes-per-world: 64
-  # 槽位边长（格），即最大档家园的占用边长，所有家园按此预留空间
-  slot-size: 512
-  # 相邻家园区域之间的隔离间隔（格）
-  gap: 64
-  # 家园世界内无人持续时间（秒）超过后卸载世界
+  # 固定指定的家园世界名列表（有序）。留空则首次需要时自动生成 misthome_0。
+  worlds: []
+  # 世界池容量上限（含自动生成），0 = 不限
+  max-worlds: 16
+  # 池满时是否自动生成新家园世界（misthome_N 递增）
+  auto-grow: true
+  # 每个世界容纳的家园数量（必须是完全平方数，16 -> 4x4 网格）
+  homes-per-world: 16
+  # 槽位边长（格），必须是 512 的倍数（region 文件对齐）。
+  # 1024 = 2x2 region：每个家园独占 4 组 mca 文件（region/entities/poi）。
+  # 槽内可用半径上限 = slot-size/2 - 模拟距离(160) = 352，再大可能污染邻居空槽
+  slot-size: 1024
+  # 服务端模拟距离（区块），用于空槽污染兜底判定与隔离告警
+  simulation-distance: 10
+  # 家园世界内无人持续时间（秒）超过后卸载、归档家园数据并删除世界目录
   unload-delay-seconds: 300
-  # 兜底扫描周期（秒）：扫描已加载家园世界，标记无人时间并在超时后卸载
+  # 兜底扫描周期（秒）
   sweep-interval-seconds: 20
-  # 世界环境，目前仅支持 NORMAL（虚空主世界）
+  # 世界环境（NORMAL/NETHER/THE_END/CUSTOM）
   environment: NORMAL
+  # 停放台账文件名（崩溃恢复依据，相对插件数据文件夹）
+  pool-state-file: "pool-state.json"
+
+archive:
+  # 家园存档根目录（相对插件数据文件夹），实际路径 homes/<名字_uuid>/
+  dir: "homes"
+  # 归档成功后是否删除世界文件夹（true=世界仅是运行时画布，插件存档是唯一真身）
+  delete-world-on-unload: true
 
 tiers:
   # 家园档位：level 必须连续递增；radius 为可用范围半径（格），不得超过 slot-size/2
+  # 建议 radius <= slot-size/2 - 模拟距离(默认160)，否则邻居空槽可能被污染作废
   - level: 0
     name: "初始家园"
-    radius: 64
+    radius: 96
     upgrade-price: 0
   - level: 1
     name: "中型家园"
-    radius: 128
+    radius: 192
     upgrade-price: 5000
   - level: 2
     name: "大型家园"
-    radius: 256
+    radius: 336
     upgrade-price: 20000
 
 economy:

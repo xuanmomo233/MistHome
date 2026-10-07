@@ -12,7 +12,9 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.scheduler.BukkitTask;
 import dev.mist.home.MistHomePlugin;
 import dev.mist.home.model.Home;
+import dev.mist.home.world.HomeRegion;
 import dev.mist.home.world.SlotAllocator;
+import org.bukkit.World;
 
 import java.util.Map;
 import java.util.UUID;
@@ -59,13 +61,24 @@ public class TeleportService implements Listener {
 
     /**
      * 传送到家园出生点（管理员可 bypass 冷却与吟唱）。
+     * 世界池模型：先确保家园停放到池世界，再换算出生点绝对坐标。
      */
     public CompletableFuture<Boolean> teleportToHome(Player player, Home home, boolean bypass) {
-        int worldIndex = SlotAllocator.worldIndexOf(home.slotIndex(),
-                plugin.mistConfig().homesPerWorld());
-        return teleport(player, () -> plugin.worldManager().ensureLoaded(worldIndex)
-                .thenApply(world -> new Location(world, home.spawnX(), home.spawnY(),
-                        home.spawnZ(), home.spawnYaw(), home.spawnPitch())), bypass);
+        var cfg = plugin.mistConfig();
+        return teleport(player, () -> plugin.worldManager().ensureParked(home)
+                .thenApply(p -> {
+                    World world = plugin.worldManager().worldOf(p);
+                    if (world == null) {
+                        return null;
+                    }
+                    HomeRegion region = SlotAllocator.regionOf(
+                            p.globalSlot(cfg.homesPerWorld()), cfg.homesPerWorld(),
+                            cfg.slotSize(), 0);
+                    return new Location(world,
+                            region.centerX() + home.spawnX(), home.spawnY(),
+                            region.centerZ() + home.spawnZ(),
+                            home.spawnYaw(), home.spawnPitch());
+                }), bypass);
     }
 
     /**
