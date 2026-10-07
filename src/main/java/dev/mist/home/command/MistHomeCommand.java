@@ -78,6 +78,15 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
         }
 
         String sub = args[0].toLowerCase();
+        // 自有家园操作统一校验 misthome.use；visit/list 单独校验 misthome.visit
+        boolean needsUse = switch (sub) {
+            case "visit", "list", "accept", "deny", "admin" -> false;
+            default -> true;
+        };
+        if (needsUse && !player.hasPermission("misthome.use")) {
+            msg(player, "§c无权限");
+            return true;
+        }
         switch (sub) {
             case "create" -> cmdCreate(player, args);
             case "home" -> cmdHome(player);
@@ -141,12 +150,13 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                             .thenAcceptAsync(home -> finishCreate(player, home, finalTemplate, price),
                                     mainExecutor)
                             .exceptionally(t -> {
-                                // 创建失败退款
-                                if (price > 0) {
-                                    plugin.economy().deposit(player, price);
-                                }
-                                Bukkit.getScheduler().runTask(plugin, () ->
-                                        msg(player, "§c家园创建失败：" + t.getMessage()));
+                                // 创建失败退款（Vault 操作回主线程）
+                                Bukkit.getScheduler().runTask(plugin, () -> {
+                                    if (price > 0) {
+                                        plugin.economy().deposit(player, price);
+                                    }
+                                    msg(player, "§c家园创建失败：" + t.getMessage());
+                                });
                                 return null;
                             });
                 }, mainExecutor);
@@ -161,13 +171,16 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                     HomeRegion region = plugin.homeService().regionOf(home);
                     plugin.templates().paste(template, world, region)
                             .thenRun(() -> {
+                                ensureSafeSpawn(world, region, home);
                                 plugin.teleportService().teleportToHome(player, home);
                                 msg(player, "§a家园创建成功！"
                                         + (price > 0 ? "（花费 " + price + "）" : ""));
                             })
                             .exceptionally(t -> {
-                                // 模板粘贴失败不阻塞传送，平台由下次 create 兜底
+                                // 模板粘贴失败：仍然保证有地面可站，再传送
                                 plugin.getLogger().warning("模板粘贴失败: " + t.getMessage());
+                                plugin.templates().pasteFallbackPlatform(world, region);
+                                ensureSafeSpawn(world, region, home);
                                 plugin.teleportService().teleportToHome(player, home);
                                 return null;
                             });
@@ -176,6 +189,26 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                     msg(player, "§c家园世界加载失败：" + t.getMessage());
                     return null;
                 });
+    }
+
+    /**
+     * 粘贴后校正出生点：区域中心无地面（虚空/空洞模板）时先补降级平台，
+     * 再把出生点设到中心最高方块上表面，防止传送后卡方块或坠虚空。
+     */
+    private void ensureSafeSpawn(World world, HomeRegion region, Home home) {
+        int cx = region.centerX();
+        int cz = region.centerZ();
+        int highest = world.getHighestBlockYAt(cx, cz);
+        if (highest < 64) {
+            plugin.templates().pasteFallbackPlatform(world, region);
+            highest = 64;
+        }
+        double safeY = highest + 1;
+        if (safeY != home.spawnY()) {
+            home.setSpawn(cx + 0.5, safeY, cz + 0.5, home.spawnYaw(), home.spawnPitch());
+            Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
+                    plugin.homeService().storage().updateHome(home));
+        }
     }
 
     /** /mh home —— 吟唱后传送回自己家园 */
@@ -291,22 +324,36 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             msg(player, "§c没有有效邀请");
             return;
         }
-        CompletableFuture.supplyAsync(() -> plugin.homeService().storage()
-                        .findHomeById(homeId.get()))
-                .thenAcceptAsync(opt -> {
-                    if (opt.isEmpty()) {
+        CompletableFuture.supplyAsync(() -> {
+                    Optional<Home> home = plugin.homeService().storage()
+                            .findHomeById(homeId.get());
+                    boolean banned = home.isPresent()
+                            && plugin.homeService().storage()
+                                    .isBanned(home.get().id(), player.getUniqueId());
+                    return new AcceptResult(home, banned);
+                }).thenAcceptAsync(res -> {
+                    if (res.home().isEmpty()) {
                         msg(player, "§c该家园已被删除");
                         return;
                     }
-                    Home home = opt.get();
+                    if (res.banned()) {
+                        msg(player, "§c你已被该家园封禁，无法接受邀请");
+                        return;
+                    }
+                    Home home = res.home().get();
                     plugin.homeService().cache(home);
                     Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
                             plugin.homeService().storage()
                                     .setRole(home.id(), player.getUniqueId(), HomeRole.MEMBER));
                     plugin.homeService().cacheRole(home.id(), player.getUniqueId(), HomeRole.MEMBER);
+                    String ownerName = Optional.ofNullable(
+                            Bukkit.getOfflinePlayer(home.owner()).getName()).orElse("家园主");
                     msg(player, "§a已加入「" + home.name() + "」，输入 /mh visit "
-                            + Bukkit.getOfflinePlayer(home.owner()).getName() + " 参观");
+                            + ownerName + " 参观");
                 }, mainExecutor);
+    }
+
+    private record AcceptResult(Optional<Home> home, boolean banned) {
     }
 
     /** /mh deny —— 拒绝邀请 */

@@ -99,7 +99,7 @@ public abstract class JdbcStorage implements Storage {
                 rs.getInt("slot_index"),
                 rs.getInt("tier_level"),
                 rs.getString("template"),
-                HomeVisibility.valueOf(rs.getString("visibility")),
+                HomeVisibility.of(rs.getString("visibility")),
                 rs.getDouble("spawn_x"), rs.getDouble("spawn_y"), rs.getDouble("spawn_z"),
                 rs.getFloat("spawn_yaw"), rs.getFloat("spawn_pitch"),
                 rs.getLong("created_at"));

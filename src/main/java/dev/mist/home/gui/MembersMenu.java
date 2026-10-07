@@ -81,11 +81,10 @@ public class MembersMenu extends Menu {
                 }
                 Player viewer = (Player) e.getWhoClicked();
                 if (e.getClick() == ClickType.RIGHT) {
-                    removeMember(memberId);
+                    removeMember(memberId).thenRun(() -> refresh(viewer));
                 } else {
-                    cycleRole(memberId, role);
+                    cycleRole(memberId, role).thenRun(() -> refresh(viewer));
                 }
-                refresh(viewer);
             });
             slot++;
         }
@@ -93,22 +92,22 @@ public class MembersMenu extends Menu {
                 ((Player) e.getWhoClicked()).performCommand("misthome gui"));
     }
 
-    /** 操作完成后重开菜单刷新成员列表 */
+    /** 异步写完成后重开菜单刷新成员列表 */
     private void refresh(Player viewer) {
-        Bukkit.getScheduler().runTaskLater(plugin,
-                () -> MembersMenu.open(plugin, viewer, home, canManage), 2L);
+        Bukkit.getScheduler().runTask(plugin,
+                () -> MembersMenu.open(plugin, viewer, home, canManage));
     }
 
-    private void cycleRole(UUID memberId, HomeRole current) {
+    private CompletableFuture<Void> cycleRole(UUID memberId, HomeRole current) {
         HomeRole next = current == HomeRole.MEMBER ? HomeRole.OPERATOR : HomeRole.MEMBER;
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+        return CompletableFuture.runAsync(() -> {
             plugin.homeService().storage().setRole(home.id(), memberId, next);
             plugin.homeService().cacheRole(home.id(), memberId, next);
         });
     }
 
-    private void removeMember(UUID memberId) {
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+    private CompletableFuture<Void> removeMember(UUID memberId) {
+        return CompletableFuture.runAsync(() -> {
             plugin.homeService().storage().removeMember(home.id(), memberId);
             plugin.homeService().evictRole(home.id(), memberId);
         });

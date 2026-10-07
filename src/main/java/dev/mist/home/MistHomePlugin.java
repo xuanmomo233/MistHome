@@ -40,8 +40,8 @@ public final class MistHomePlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        mistConfig = new MistConfig(getConfig());
         try {
+            mistConfig = new MistConfig(getConfig());
             mistConfig.validate();
         } catch (IllegalArgumentException e) {
             getLogger().log(Level.SEVERE, "配置文件校验失败，插件停用: " + e.getMessage());

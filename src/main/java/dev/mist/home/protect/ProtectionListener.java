@@ -338,6 +338,24 @@ public class ProtectionListener implements Listener {
         }
     }
 
+    // ========== 载具进入（船/矿车/马） ==========
+
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onVehicleEnter(org.bukkit.event.vehicle.VehicleEnterEvent e) {
+        if (shouldSkip()) return;
+        if (e.getEntered() instanceof Player p
+                && !allow(p, e.getVehicle().getLocation(), Perm.BUILD)) {
+            deny(p, e, "你无法驾驶该载具");
+        }
+    }
+
+    // ========== 清理 ----------
+
+    @EventHandler
+    public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {
+        denyMsgAt.remove(e.getPlayer().getUniqueId());
+    }
+
     // ========== 末影珍珠/紫颂果：阻止进入无权区域 ==========
 
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)

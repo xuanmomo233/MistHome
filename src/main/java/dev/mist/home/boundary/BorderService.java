@@ -80,10 +80,11 @@ public class BorderService implements Listener {
 
     /**
      * 玩家位置变化时调用：进入家园可用区显示边界，离开还原。
+     * 注意：必须传入事件中的目标 Location，不能用 player.getLocation()——
+     * MONITOR 阶段传送尚未生效，getLocation 仍返回旧位置。
      */
-    private void update(Player player) {
+    private void update(Player player, Location loc) {
         HomeService hs = plugin.homeService();
-        Location loc = player.getLocation();
         Optional<Home> opt = hs.homeAt(loc.getWorld(), loc.getBlockX(), loc.getBlockZ());
         HomeRegion region = opt.map(hs::regionOf).orElse(null);
         boolean inside = region != null && region.containsUsable(loc.getX(), loc.getZ());
@@ -148,7 +149,8 @@ public class BorderService implements Listener {
             pkt.getDoubles().write(2, size);
             pkt.getDoubles().write(3, size);
             pkt.getLongs().write(0, 0L);
-            pkt.getIntegers().write(0, wb.getWarningDistance());
+            // ints[0] = newAbsoluteMaxSize，必须给原版上限而非 warningDistance
+            pkt.getIntegers().write(0, 29999984);
             pkt.getIntegers().write(1, wb.getWarningTime());
             pkt.getIntegers().write(2, wb.getWarningDistance());
             protocol.sendServerPacket(player, pkt);
@@ -208,7 +210,7 @@ public class BorderService implements Listener {
                 && from.getWorld().equals(to.getWorld())) {
             return;
         }
-        update(e.getPlayer());
+        update(e.getPlayer(), to);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -218,7 +220,7 @@ public class BorderService implements Listener {
             return;
         }
         // 跨世界传送后刷新（含进入/离开家园世界）
-        update(e.getPlayer());
+        update(e.getPlayer(), to);
     }
 
     @EventHandler
