@@ -94,8 +94,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             case "private" -> cmdVisibility(player, HomeVisibility.PRIVATE);
             case "upgrade" -> cmdUpgrade(player);
             case "list" -> cmdList(player);
-            case "admin" ->
-                    msg(player, "§7子命令 admin 将在后续里程碑实现");
+            case "admin" -> cmdAdmin(player, args);
             default -> {
                 msg(player, "§c未知子命令，输入 /mh 查看帮助");
             }
@@ -484,6 +483,79 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             return;
         }
         dev.mist.home.gui.PublicHomesMenu.open(plugin, player, 0);
+    }
+
+    // ---------- M8 管理员工具 ----------
+
+    /** /mh admin <reload|visit|unload|info> */
+    private void cmdAdmin(Player player, String[] args) {
+        if (!player.hasPermission("misthome.admin")) {
+            msg(player, "§c无权限");
+            return;
+        }
+        if (args.length < 2) {
+            msg(player, "§c用法：/mh admin <reload|visit|unload|info>");
+            return;
+        }
+        switch (args[1].toLowerCase()) {
+            case "reload" -> adminReload(player);
+            case "visit" -> adminVisit(player, args);
+            case "unload" -> adminUnload(player, args);
+            case "info" -> adminInfo(player);
+            default -> msg(player, "§c未知管理子命令");
+        }
+    }
+
+    private void adminReload(Player player) {
+        try {
+            plugin.reloadMistConfig();
+            msg(player, "§a配置已重载并校验通过");
+        } catch (IllegalArgumentException e) {
+            msg(player, "§c配置校验失败：" + e.getMessage());
+        }
+    }
+
+    private void adminVisit(Player player, String[] args) {
+        if (args.length < 3) {
+            msg(player, "§c用法：/mh admin visit <玩家>");
+            return;
+        }
+        Player online = Bukkit.getPlayerExact(args[2]);
+        OfflinePlayer target = online != null ? online : Bukkit.getOfflinePlayer(args[2]);
+        plugin.homeService().homeOfAsync(target.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c对方没有家园");
+                        return;
+                    }
+                    plugin.teleportService().teleportToHome(player, opt.get(), true);
+                }, mainExecutor);
+    }
+
+    private void adminUnload(Player player, String[] args) {
+        if (args.length < 3) {
+            msg(player, "§c用法：/mh admin unload <worldIndex>");
+            return;
+        }
+        int index;
+        try {
+            index = Integer.parseInt(args[2]);
+        } catch (NumberFormatException e) {
+            msg(player, "§cworldIndex 必须是数字");
+            return;
+        }
+        if (plugin.worldManager().forceUnload(index)) {
+            msg(player, "§a已触发卸载 misthome_" + index);
+        } else {
+            msg(player, "§c世界 misthome_" + index + " 未加载");
+        }
+    }
+
+    private void adminInfo(Player player) {
+        msg(player, "§7已加载家园世界：§f" + plugin.worldManager().loadedCount()
+                + " §7| 存储：§f" + plugin.mistConfig().storageType()
+                + " §7| 每世界槽位：§f" + plugin.mistConfig().homesPerWorld()
+                + " §7| 槽位大小：§f" + plugin.mistConfig().slotSize());
     }
 
     private void sendHelp(Player player) {

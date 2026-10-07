@@ -116,6 +116,14 @@ public final class MistHomePlugin extends JavaPlugin {
         return mistConfig;
     }
 
+    /** 热重载配置（admin reload）。校验失败抛 IllegalArgumentException */
+    public void reloadMistConfig() {
+        reloadConfig();
+        MistConfig next = new MistConfig(getConfig());
+        next.validate();
+        this.mistConfig = next;
+    }
+
     public HomeWorldManager worldManager() {
         return worldManager;
     }

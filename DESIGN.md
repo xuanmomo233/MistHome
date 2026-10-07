@@ -186,20 +186,22 @@ home_bans (
 
 ```
 dev.mist.home
-├── MistHomePlugin            主类（生命周期装配）
-├── config/MistConfig         配置读取
+├── MistHomePlugin            主类（生命周期装配 + 热重载）
+├── config/MistConfig         配置读取 + 校验
 ├── model/                    Home / HomeRole / HomeTier / HomeVisibility
 ├── world/                    HomeWorldManager / VoidGenerator / SlotAllocator / HomeRegion
-├── home/HomeService          家园缓存与坐标反查
+├── home/HomeService          懒加载缓存与坐标反查（byOwner/byId/bySlot/roleCache）
 ├── storage/                  Storage 接口 / JdbcStorage / SqliteStorage / MysqlStorage
-├── protect/ProtectionListener 区域保护事件拦截
+│                             / StorageException / DuplicateKeyException
+├── protect/ProtectionListener 区域保护全事件拦截
 ├── boundary/BorderService    ProtocolLib 边界包 / 粒子降级
 ├── template/TemplateService  WorldEdit 模板粘贴 / 降级平台
 ├── economy/EconomyService    Vault 钩子
 ├── invite/InviteManager      内存邀请
-├── teleport/TeleportService  吟唱传送 + 冷却 + 打断
-├── gui/                      箱子菜单（主菜单/成员/公共列表/模板选择）
-└── command/MistHomeCommand   命令分发
+├── teleport/TeleportService  吟唱传送 + 冷却 + 打断（管理员 bypass）
+├── actions/HomeActions       命令/GUI 共享动作
+├── gui/                      Menu 框架 / MainMenu / MembersMenu / PublicHomesMenu / TemplateMenu
+└── command/MistHomeCommand   命令分发（全部子命令实装）
 ```
 
 ## 13. 风险与注意事项
@@ -214,10 +216,10 @@ dev.mist.home
 ## 14. 开发里程碑
 
 - [x] M1 存储层：JdbcStorage CRUD + 建表 SQL + HomeService 缓存与反查索引
-- [ ] M2 家园生命周期：create/home 命令 + 传送吟唱 + 世界按需加载联调
-- [ ] M3 保护：ProtectionListener 全事件覆盖 + 预留区拦截
-- [ ] M4 权限与成员：invite/members/ban + GUI
-- [ ] M5 模板：WorldEdit 粘贴 + 模板选择 GUI
-- [ ] M6 边界：ProtocolLib 发包 + 粒子降级
-- [ ] M7 公共列表/参观 + upgrade 经济闭环
-- [ ] M8 管理员工具 + 收尾（消息文件、热重载、文档）
+- [x] M2 家园生命周期：create/home 命令 + 传送吟唱 + 世界按需加载联调
+- [x] M3 保护：ProtectionListener 全事件覆盖 + 预留区拦截
+- [x] M4 权限与成员：invite/members/ban + GUI
+- [x] M5 模板：WorldEdit 粘贴 + 模板选择 GUI
+- [x] M6 边界：ProtocolLib 发包 + 粒子降级
+- [x] M7 公共列表/参观 + upgrade 经济闭环
+- [x] M8 管理员工具 + 收尾（热重载、文档）

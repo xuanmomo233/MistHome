@@ -54,11 +54,18 @@ public class TeleportService implements Listener {
      * @return future 传送是否最终完成（false = 冷却中/被打断/世界加载失败/玩家离线）
      */
     public CompletableFuture<Boolean> teleportToHome(Player player, Home home) {
+        return teleportToHome(player, home, false);
+    }
+
+    /**
+     * 传送到家园出生点（管理员可 bypass 冷却与吟唱）。
+     */
+    public CompletableFuture<Boolean> teleportToHome(Player player, Home home, boolean bypass) {
         int worldIndex = SlotAllocator.worldIndexOf(home.slotIndex(),
                 plugin.mistConfig().homesPerWorld());
         return teleport(player, () -> plugin.worldManager().ensureLoaded(worldIndex)
                 .thenApply(world -> new Location(world, home.spawnX(), home.spawnY(),
-                        home.spawnZ(), home.spawnYaw(), home.spawnPitch())));
+                        home.spawnZ(), home.spawnYaw(), home.spawnPitch())), bypass);
     }
 
     /**
@@ -67,8 +74,17 @@ public class TeleportService implements Listener {
      */
     public CompletableFuture<Boolean> teleport(Player player,
                                                Supplier<CompletableFuture<Location>> target) {
+        return teleport(player, target, false);
+    }
+
+    /**
+     * 通用传送（bypass=true 跳过冷却与吟唱，管理员/内部调用）。
+     */
+    public CompletableFuture<Boolean> teleport(Player player,
+                                               Supplier<CompletableFuture<Location>> target,
+                                               boolean bypass) {
         CompletableFuture<Boolean> result = new CompletableFuture<>();
-        long remaining = cooldownRemaining(player.getUniqueId());
+        long remaining = bypass ? 0 : cooldownRemaining(player.getUniqueId());
         if (remaining > 0) {
             player.sendMessage(plugin.mistConfig().prefix()
                     + "§c传送冷却中，还需等待 " + remaining + " 秒");
@@ -77,7 +93,6 @@ public class TeleportService implements Listener {
         }
 
         cancelWarmup(player.getUniqueId());
-        int warmup = plugin.mistConfig().warmupSeconds();
 
         Runnable proceed = () -> {
             try {
@@ -94,7 +109,9 @@ public class TeleportService implements Listener {
                         return;
                     }
                     player.teleport(loc);
-                    recordCooldown(player.getUniqueId());
+                    if (!bypass) {
+                        recordCooldown(player.getUniqueId());
+                    }
                     result.complete(true);
                 });
             } catch (Throwable t) {
@@ -102,6 +119,7 @@ public class TeleportService implements Listener {
             }
         };
 
+        int warmup = bypass ? 0 : plugin.mistConfig().warmupSeconds();
         if (warmup <= 0) {
             proceed.run();
         } else {

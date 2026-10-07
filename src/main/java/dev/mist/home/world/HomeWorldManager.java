@@ -30,7 +30,6 @@ import java.util.logging.Level;
 public class HomeWorldManager {
 
     private final MistHomePlugin plugin;
-    private final MistConfig config;
 
     /** worldIndex -> 已加载的世界 */
     private final Map<Integer, World> loaded = new ConcurrentHashMap<>();
@@ -43,20 +42,24 @@ public class HomeWorldManager {
 
     public HomeWorldManager(MistHomePlugin plugin) {
         this.plugin = plugin;
-        this.config = plugin.mistConfig();
+    }
+
+    /** 动态读取配置，支持热重载 */
+    private MistConfig cfg() {
+        return plugin.mistConfig();
     }
 
     public void start() {
-        long period = config.sweepIntervalSeconds() * 20L;
+        long period = cfg().sweepIntervalSeconds() * 20L;
         sweepTask = Bukkit.getScheduler().runTaskTimer(plugin, this::sweep, period, period);
     }
 
     public String worldName(int worldIndex) {
-        return config.worldPrefix() + worldIndex;
+        return cfg().worldPrefix() + worldIndex;
     }
 
     public boolean isHomeWorld(String worldName) {
-        return worldName != null && worldName.startsWith(config.worldPrefix());
+        return worldName != null && worldName.startsWith(cfg().worldPrefix());
     }
 
     /**
@@ -67,7 +70,7 @@ public class HomeWorldManager {
         if (!isHomeWorld(worldName)) {
             return -1;
         }
-        String suffix = worldName.substring(config.worldPrefix().length());
+        String suffix = worldName.substring(cfg().worldPrefix().length());
         try {
             return Integer.parseInt(suffix);
         } catch (NumberFormatException e) {
@@ -143,7 +146,7 @@ public class HomeWorldManager {
      */
     private void sweep() {
         long now = System.currentTimeMillis();
-        long delayMs = config.unloadDelaySeconds() * 1000L;
+        long delayMs = cfg().unloadDelaySeconds() * 1000L;
 
         // 复制 entrySet 防止 unloadWorld 修改 loaded 时触发 ConcurrentModificationException
         for (Map.Entry<Integer, World> entry : new ArrayList<>(loaded.entrySet())) {
@@ -186,6 +189,35 @@ public class HomeWorldManager {
         } catch (Throwable t) {
             plugin.getLogger().log(Level.WARNING, "卸载家园世界异常: " + name, t);
         }
+    }
+
+    /**
+     * 强制卸载指定家园世界（管理员命令）。
+     * 先把世界内玩家送回非家园世界，再保存卸载。
+     *
+     * @return 是否执行了卸载（世界未加载返回 false）
+     */
+    public boolean forceUnload(int worldIndex) {
+        World world = loaded.get(worldIndex);
+        if (world == null) {
+            return false;
+        }
+        World fallback = Bukkit.getWorlds().stream()
+                .filter(w -> !isHomeWorld(w.getName()))
+                .findFirst()
+                .orElse(null);
+        for (Player p : new java.util.ArrayList<>(world.getPlayers())) {
+            if (fallback != null) {
+                p.teleport(fallback.getSpawnLocation());
+            }
+        }
+        unloadWorld(worldIndex, world);
+        return true;
+    }
+
+    /** 当前已加载的家园世界数量（管理员工具用） */
+    public int loadedCount() {
+        return loaded.size();
     }
 
     /**
