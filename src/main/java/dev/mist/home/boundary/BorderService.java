@@ -1,9 +1,5 @@
 package dev.mist.home.boundary;
 
-import com.comphenix.protocol.PacketType;
-import com.comphenix.protocol.ProtocolLibrary;
-import com.comphenix.protocol.ProtocolManager;
-import com.comphenix.protocol.events.PacketContainer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -28,15 +24,15 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 家园边界可视化。
  * <p>
- * 优先 ProtocolLib 发送世界边界包（ClientboundInitializeBorder），
- * 未安装时降级为沿可用边界周期刷粒子线。
+ * 优先 ProtocolLib 发送世界边界包（经 ProtocolLibBorder 委托类
+ * 隔离软依赖），未安装时降级为沿可用边界周期刷粒子线。
  * 玩家进入家园可用范围显示边界，离开还原。
  */
 public class BorderService implements Listener {
 
     private final MistHomePlugin plugin;
     private boolean protocolLibAvailable;
-    private ProtocolManager protocol;
+    private ProtocolLibBorder protocol;
 
     /** player -> 当前已显示边界的家园（null 表示未显示） */
     private final Map<UUID, Home> shown = new ConcurrentHashMap<>();
@@ -53,7 +49,7 @@ public class BorderService implements Listener {
         Bukkit.getPluginManager().registerEvents(this, plugin);
 
         if (protocolLibAvailable) {
-            protocol = ProtocolLibrary.getProtocolManager();
+            protocol = new ProtocolLibBorder();
             plugin.getLogger().info("已检测到 ProtocolLib，使用世界边界包显示家园范围");
         } else {
             plugin.getLogger().info("未检测到 ProtocolLib，边界降级为粒子显示");
@@ -67,10 +63,15 @@ public class BorderService implements Listener {
             particleTask = null;
         }
         // 还原所有显示中的边界
-        for (UUID uuid : shown.keySet()) {
-            Player p = Bukkit.getPlayer(uuid);
-            if (p != null && p.isOnline()) {
-                sendResetPacket(p);
+        if (protocolLibAvailable) {
+            for (UUID uuid : shown.keySet()) {
+                Player p = Bukkit.getPlayer(uuid);
+                if (p != null && p.isOnline()) {
+                    try {
+                        protocol.reset(p, p.getWorld());
+                    } catch (Throwable ignored) {
+                    }
+                }
             }
         }
         shown.clear();
@@ -103,59 +104,23 @@ public class BorderService implements Listener {
     }
 
     private void showBorder(Player player, Home home, HomeRegion region) {
-        if (protocolLibAvailable) {
-            sendWorldBorderPacket(player, region);
+        if (protocolLibAvailable && protocol != null) {
+            try {
+                protocol.show(player, region);
+            } catch (Throwable t) {
+                plugin.getLogger().warning("ProtocolLib 边界包发送失败: " + t.getMessage());
+            }
         }
         // 粒子降级模式下不需要主动显示，particleTask 每周期检查 shown
     }
 
     private void clearBorder(Player player) {
-        if (protocolLibAvailable) {
-            sendResetPacket(player);
-        }
-    }
-
-    // ---------- ProtocolLib 发包 ----------
-
-    private void sendWorldBorderPacket(Player player, HomeRegion region) {
-        try {
-            PacketContainer pkt = protocol.createPacket(PacketType.Play.Server.INITIALIZE_BORDER);
-            double diameter = Math.max(region.usableRadius() * 2.0, 1.0);
-            // 字段序：newX/newZ/oldDiameter/newDiameter (doubles 0-3)
-            pkt.getDoubles().write(0, (double) region.centerX());
-            pkt.getDoubles().write(1, (double) region.centerZ());
-            pkt.getDoubles().write(2, diameter);
-            pkt.getDoubles().write(3, diameter);
-            // speed (longs 0)：0 = 立即生效
-            pkt.getLongs().write(0, 0L);
-            // newAbsoluteMaxSize / warningTime / warningBlocks (ints 0-2)
-            pkt.getIntegers().write(0, 29999984);
-            pkt.getIntegers().write(1, 0);
-            pkt.getIntegers().write(2, 0);
-            protocol.sendServerPacket(player, pkt);
-        } catch (Throwable t) {
-            plugin.getLogger().warning("ProtocolLib 边界包发送失败: " + t.getMessage());
-        }
-    }
-
-    /** 还原为世界真实边界 */
-    private void sendResetPacket(Player player) {
-        try {
-            var wb = player.getWorld().getWorldBorder();
-            PacketContainer pkt = protocol.createPacket(PacketType.Play.Server.INITIALIZE_BORDER);
-            pkt.getDoubles().write(0, wb.getCenter().getX());
-            pkt.getDoubles().write(1, wb.getCenter().getZ());
-            double size = wb.getSize();
-            pkt.getDoubles().write(2, size);
-            pkt.getDoubles().write(3, size);
-            pkt.getLongs().write(0, 0L);
-            // ints[0] = newAbsoluteMaxSize，必须给原版上限而非 warningDistance
-            pkt.getIntegers().write(0, 29999984);
-            pkt.getIntegers().write(1, wb.getWarningTime());
-            pkt.getIntegers().write(2, wb.getWarningDistance());
-            protocol.sendServerPacket(player, pkt);
-        } catch (Throwable t) {
-            plugin.getLogger().warning("ProtocolLib 边界还原失败: " + t.getMessage());
+        if (protocolLibAvailable && protocol != null) {
+            try {
+                protocol.reset(player, player.getWorld());
+            } catch (Throwable t) {
+                plugin.getLogger().warning("ProtocolLib 边界还原失败: " + t.getMessage());
+            }
         }
     }
 
