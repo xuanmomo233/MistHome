@@ -82,11 +82,53 @@ public class TemplateService {
         return future;
     }
 
-    /** TODO：WorldEdit .schem 粘贴实现 */
-    private void pasteWorldEdit(String template, World world, HomeRegion region) {
-        // 读取 plugins/MistHome/templates/<template>.schem
-        // -> ClipboardFormat -> ClipboardReader -> EditSession paste 到 region 中心
-        plugin.getLogger().warning("WorldEdit 模板粘贴尚未实现，家园 " + template + " 未粘贴");
+    /**
+     * WorldEdit .schem 粘贴实现。
+     * <p>
+     * 读取 plugins/MistHome/templates/&lt;template&gt;.schem → Clipboard →
+     * EditSession 粘贴到区域中心（水平居中，地面 y=64）。
+     * 粘贴位置换算：期望区域最小点落在 center-dim/2 处，
+     * pastePos = origin + desiredMin - regionMin。
+     */
+    private void pasteWorldEdit(String template, World world, HomeRegion region)
+            throws Exception {
+        File file = new File(new File(plugin.getDataFolder(),
+                plugin.mistConfig().templateDir()), template + ".schem");
+        if (!file.isFile()) {
+            plugin.getLogger().warning("模板文件不存在: " + file.getPath() + "，降级平台");
+            pasteFallbackPlatform(world, region);
+            return;
+        }
+
+        com.sk89q.worldedit.extent.clipboard.io.ClipboardFormat format =
+                com.sk89q.worldedit.extent.clipboard.io.ClipboardFormats.findByFile(file);
+        if (format == null) {
+            throw new IllegalStateException("无法识别模板格式: " + file.getName());
+        }
+
+        try (var reader = format.getReader(new java.io.FileInputStream(file));
+             var session = com.sk89q.worldedit.WorldEdit.getInstance().newEditSession(
+                     com.sk89q.worldedit.bukkit.BukkitAdapter.adapt(world))) {
+
+            var clipboard = reader.read();
+            var min = clipboard.getRegion().getMinimumPoint();
+            var dim = clipboard.getDimensions();
+            var origin = clipboard.getOrigin();
+            int baseY = 64;
+            var pastePos = com.sk89q.worldedit.math.BlockVector3.at(
+                    region.centerX() - dim.getX() / 2 - min.getX() + origin.getX(),
+                    baseY - min.getY() + origin.getY(),
+                    region.centerZ() - dim.getZ() / 2 - min.getZ() + origin.getZ());
+
+            var op = new com.sk89q.worldedit.session.ClipboardHolder(clipboard)
+                    .createPaste(session)
+                    .to(pastePos)
+                    .ignoreAirBlocks(true)
+                    .build();
+            com.sk89q.worldedit.function.operation.Operations.complete(op);
+            plugin.getLogger().info("模板已粘贴: " + template + " -> 槽位 ("
+                    + region.gridX() + "," + region.gridZ() + ")");
+        }
     }
 
     /** 降级：在区域中心生成 fallback-platform-size 边长的平台 */

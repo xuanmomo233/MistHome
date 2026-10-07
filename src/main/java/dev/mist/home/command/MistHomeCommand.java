@@ -114,9 +114,11 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (template == null) {
-            // 默认模板：优先 default，其次第一个，否则走降级平台
-            template = available.contains("default") ? "default"
-                    : (available.isEmpty() ? null : available.get(0));
+            // 有可用模板时打开选择 GUI；否则直接用降级平台
+            if (!available.isEmpty()) {
+                new dev.mist.home.gui.TemplateMenu(plugin, available).open(player);
+                return;
+            }
         }
         String finalTemplate = template;
 
