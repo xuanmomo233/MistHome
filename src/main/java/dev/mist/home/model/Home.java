@@ -24,11 +24,13 @@ public class Home {
     private float spawnYaw;
     private float spawnPitch;
     private final long createdAt;
+    /** 归属服务器（BungeeCord 中的子服名）；"" 表示本地/未启用跨服 */
+    private final String server;
 
     public Home(long id, UUID owner, String name, int slotIndex, int tierLevel,
                 String template, HomeVisibility visibility,
                 double spawnX, double spawnY, double spawnZ,
-                float spawnYaw, float spawnPitch, long createdAt) {
+                float spawnYaw, float spawnPitch, long createdAt, String server) {
         this.id = id;
         this.owner = owner;
         this.name = name;
@@ -42,6 +44,7 @@ public class Home {
         this.spawnYaw = spawnYaw;
         this.spawnPitch = spawnPitch;
         this.createdAt = createdAt;
+        this.server = server == null ? "" : server;
     }
 
     public long id() { return id; }
@@ -57,6 +60,7 @@ public class Home {
     public float spawnYaw() { return spawnYaw; }
     public float spawnPitch() { return spawnPitch; }
     public long createdAt() { return createdAt; }
+    public String server() { return server; }
 
     public void setName(String name) { this.name = name; }
     public void setTierLevel(int tierLevel) { this.tierLevel = tierLevel; }

@@ -147,6 +147,13 @@ homes (
   visibility    VARCHAR(8) NOT NULL DEFAULT 'PRIVATE',
   spawn_x       DOUBLE, spawn_y DOUBLE, spawn_z DOUBLE,
   spawn_yaw     FLOAT,  spawn_pitch FLOAT,
+  created_at    BIGINT NOT NULL,
+  server        VARCHAR(64) NOT NULL DEFAULT ''   -- 家园归属子服（BungeeCord 名），""=本地/未跨服
+)
+
+pending_actions (
+  player_uuid   VARCHAR(36) PRIMARY KEY,          -- 跨服跳服握手：落地后要去的家
+  home_id       BIGINT NOT NULL,
   created_at    BIGINT NOT NULL
 )
 
@@ -169,6 +176,21 @@ home_bans (
 - 邀请不落地（纯内存）
 - `allocateSlot()` = `SELECT MIN(slot_index)` 未占用值（可用 `slot_index+1 NOT IN` 或 0 起步探测）
 - SQLite 与 MySQL 共用 `JdbcStorage` 基类，方言差异仅在建表语句
+- 存量库升级：`init()` 探测 `server` 列缺失时 `ALTER TABLE` 补上（免手工 DDL）
+
+### 跨服（BungeeCord）
+
+- **跳服访问语义**：家园世界存档固定在创建它的子服磁盘；`homes.server` 标记归属服。
+  远程家访问（`/mh home`、`/mh visit`、公共列表、`admin visit`）→ 写 `pending_actions`
+  → `BungeeCord/Connect` 跳服 → 目标服 `PlayerJoinEvent` 消费待办，延迟 1s 免吟唱传送
+- **归属认领**：启动时 `server=''` 且归档目录在本机的家自动认领为本服；
+  归档不在本机的空标记家拒绝本地停放（防止归档缺失导致空地污染槽位）
+- **落错服兜底**：pending 消费时若当前服 ≠ 归属服，重新写 pending + Connect 重跳
+- **缓存一致性**：家数据变更（spawn/可见性/档位/成员/封禁）后经
+  `BungeeCord Forward ALL` + `misthome` 子频道广播 `invalidate-home`，各服清缓存
+- **存储切换**：`storage-type.txt` 标记记录上次后端，启动检测变更自动全量迁移
+  （homes 保 id + 成员 + 封禁），失败中止启动避免数据分叉
+- **要求**：`cross-server.enabled` 强制 `storage.type: mysql` 且 `cross-server.name` 非空
 
 ## 11. 命令表
 
@@ -186,7 +208,7 @@ home_bans (
 | `/mh ban/unban <玩家>` | 封禁管理 | 家园内 OPERATOR+ |
 | `/mh upgrade` | 升级家园档位（扣 Vault 货币） | OWNER |
 | `/mh list` | 公共家园列表 GUI | misthome.visit |
-| `/mh admin <...>` | 管理员工具（查看/进任意家园/强制卸载世界） | misthome.admin |
+| `/mh admin <...>` | 管理员工具（reload/info/unload/visit/import-selfhome；除 visit 外控制台/RCON 可用） | misthome.admin |
 
 ## 12. 包结构
 

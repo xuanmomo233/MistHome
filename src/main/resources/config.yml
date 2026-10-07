@@ -16,6 +16,16 @@ storage:
     pool-size: 4
     use-ssl: false
 
+# 跨服（BungeeCord）支持。
+# 语义：家园世界存档固定在创建它的子服磁盘上，homes 表 server 列标记归属服；
+# 玩家在其他子服 /mh home 或 visit 时自动 Connect 跳服，落地后自动传送进家。
+# 前提：所有子服共用同一个 MySQL 库（storage.type: mysql）。
+# 切换 storage.type 时插件启动自动迁移旧库数据（homes/成员/封禁，保留 id）。
+cross-server:
+  enabled: false
+  # 本服在 BungeeCord config.yml 中的服务器名（必须与其一致）
+  name: ""
+
 world:
   # 家园世界命名前缀，自动生成的世界名为 misthome_0、misthome_1 ...
   name-prefix: "misthome_"

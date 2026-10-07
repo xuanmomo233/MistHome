@@ -174,7 +174,7 @@ public class HomeService {
                 int slot = storage.allocateSlot();
                 try {
                     Home home = storage.createHome(owner, name, slot, 0, template,
-                            0.5, 65.0, 0.5);
+                            0.5, 65.0, 0.5, plugin.mistConfig().serverName());
                     cache(home);
                     return home;
                 } catch (DuplicateKeyException e) {
@@ -200,6 +200,16 @@ public class HomeService {
         byOwner.remove(home.owner());
         byId.remove(home.id());
         roleCache.remove(home.id());
+    }
+
+    /** 跨服缓存失效广播的接收端：按 homeId 清掉本地缓存 */
+    public void evictById(long homeId) {
+        Home h = byId.get(homeId);
+        if (h != null) {
+            evict(h);
+        } else {
+            roleCache.remove(homeId);
+        }
     }
 
     public void cacheRole(long homeId, UUID player, HomeRole role) {

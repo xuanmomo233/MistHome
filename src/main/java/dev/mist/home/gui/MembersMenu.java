@@ -103,6 +103,7 @@ public class MembersMenu extends Menu {
         return CompletableFuture.runAsync(() -> {
             plugin.homeService().storage().setRole(home.id(), memberId, next);
             plugin.homeService().cacheRole(home.id(), memberId, next);
+            plugin.bungee().broadcastInvalidate(home.id());
         });
     }
 
@@ -110,6 +111,7 @@ public class MembersMenu extends Menu {
         return CompletableFuture.runAsync(() -> {
             plugin.homeService().storage().removeMember(home.id(), memberId);
             plugin.homeService().evictRole(home.id(), memberId);
+            plugin.bungee().broadcastInvalidate(home.id());
         });
     }
 }

@@ -58,6 +58,16 @@ public class MistConfig {
         if (tiers.isEmpty()) {
             throw new IllegalArgumentException("tiers 配置不能为空");
         }
+        if (crossServerEnabled()) {
+            if (!"mysql".equalsIgnoreCase(storageType())) {
+                throw new IllegalArgumentException(
+                        "cross-server.enabled 需要 storage.type: mysql（跨服共享必须使用同一数据库）");
+            }
+            if (serverName().isEmpty()) {
+                throw new IllegalArgumentException(
+                        "cross-server.enabled 需要配置 cross-server.name（本服在 BungeeCord 中的服务器名）");
+            }
+        }
     }
 
     /**
@@ -182,6 +192,18 @@ public class MistConfig {
 
     public ConfigurationSection mysqlSection() {
         return config.getConfigurationSection("storage.mysql");
+    }
+
+    // ---------- cross-server ----------
+
+    /** 跨服（BungeeCord）开关：true 时要求 storage.type=mysql 且配置本服名 */
+    public boolean crossServerEnabled() {
+        return config.getBoolean("cross-server.enabled", false);
+    }
+
+    /** 本服在 BungeeCord config 中的名字；未启用跨服时可为空 */
+    public String serverName() {
+        return config.getString("cross-server.name", "").trim();
     }
 
     // ---------- economy ----------

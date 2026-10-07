@@ -63,20 +63,19 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
         subCommands.put("admin <reload|visit|unload|info|import-selfhome>", "管理员工具");
     }
 
-    private void msg(Player player, String text) {
-        player.sendMessage(plugin.mistConfig().prefix() + text);
+    private void msg(CommandSender sender, String text) {
+        sender.sendMessage(plugin.mistConfig().prefix() + text);
     }
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (!(sender instanceof Player player)) {
-            // 控制台仅放行数据迁移命令（报告直接打印到控制台）
-            if (args.length >= 2 && args[0].equalsIgnoreCase("admin")
-                    && args[1].equalsIgnoreCase("import-selfhome")) {
-                adminImportSelfHome(sender, args);
+            // 控制台/RCON 仅放行 admin 子命令；visit 在内部再按发送者类型拦截
+            if (args.length >= 1 && args[0].equalsIgnoreCase("admin")) {
+                cmdAdmin(sender, args);
             } else {
-                sender.sendMessage("仅玩家可使用");
+                sender.sendMessage("仅玩家可使用（控制台可用 /mh admin ...）");
             }
             return true;
         }
@@ -221,12 +220,14 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
         if (safeY != home.spawnY()) {
             // spawnX/Z 是相对槽位中心的偏移，中心即偏移 0.5/0.5
             home.setSpawn(0.5, safeY, 0.5, home.spawnYaw(), home.spawnPitch());
-            Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
-                    plugin.homeService().storage().updateHome(home));
+            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                plugin.homeService().storage().updateHome(home);
+                plugin.bungee().broadcastInvalidate(home.id());
+            });
         }
     }
 
-    /** /mh home —— 吟唱后传送回自己家园 */
+    /** /mh home —— 吟唱后传送回自己家园（跨服：家在其他服则 Connect 跳服） */
     private void cmdHome(Player player) {
         plugin.homeService().homeOfAsync(player.getUniqueId())
                 .thenAcceptAsync(opt -> {
@@ -234,7 +235,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         msg(player, "§c你还没有家园，输入 /mh create 创建");
                         return;
                     }
-                    plugin.teleportService().teleportToHome(player, opt.get());
+                    dev.mist.home.actions.HomeActions.goHome(plugin, player, opt.get(), false);
                 }, mainExecutor);
     }
 
@@ -283,6 +284,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                             loc.getZ() - region.centerZ(),
                             loc.getYaw(), loc.getPitch());
                     plugin.homeService().storage().updateHome(home);
+                    plugin.bungee().broadcastInvalidate(home.id());
                     msg(player, "§a出生点已更新");
                 }, mainExecutor);
     }
@@ -360,9 +362,11 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                     }
                     Home home = res.home().get();
                     plugin.homeService().cache(home);
-                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
-                            plugin.homeService().storage()
-                                    .setRole(home.id(), player.getUniqueId(), HomeRole.MEMBER));
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        plugin.homeService().storage()
+                                .setRole(home.id(), player.getUniqueId(), HomeRole.MEMBER);
+                        plugin.bungee().broadcastInvalidate(home.id());
+                    });
                     plugin.homeService().cacheRole(home.id(), player.getUniqueId(), HomeRole.MEMBER);
                     String ownerName = Optional.ofNullable(
                             Bukkit.getOfflinePlayer(home.owner()).getName()).orElse("家园主");
@@ -440,6 +444,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                             plugin.homeService().storage().unban(home.id(), target.getUniqueId());
                         }
                         plugin.homeService().evictRole(home.id(), target.getUniqueId());
+                        plugin.bungee().broadcastInvalidate(home.id());
                     });
                     msg(player, ban ? "§a已封禁 " + targetName : "§a已解封 " + targetName);
                     if (ban && online != null) {
@@ -500,8 +505,10 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         return;
                     }
                     home.setVisibility(target);
-                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
-                            plugin.homeService().storage().updateHome(home));
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        plugin.homeService().storage().updateHome(home);
+                        plugin.bungee().broadcastInvalidate(home.id());
+                    });
                     msg(player, "§a家园已设为"
                             + (target == HomeVisibility.PUBLIC ? "公开，任何人可参观" : "私密"));
                 }, mainExecutor);
@@ -533,8 +540,10 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         return;
                     }
                     home.setTierLevel(next.level());
-                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
-                            plugin.homeService().storage().updateHome(home));
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                        plugin.homeService().storage().updateHome(home);
+                        plugin.bungee().broadcastInvalidate(home.id());
+                    });
                     msg(player, "§a升级成功！" + next.name()
                             + "（半径 " + next.radius() + "）"
                             + (price > 0 ? "，花费 " + price : ""));
@@ -552,23 +561,29 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
 
     // ---------- M8 管理员工具 ----------
 
-    /** /mh admin <reload|visit|unload|info> */
-    private void cmdAdmin(Player player, String[] args) {
-        if (!player.hasPermission("misthome.admin")) {
-            msg(player, "§c无权限");
+    /** /mh admin <reload|visit|unload|info|import-selfhome> */
+    private void cmdAdmin(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("misthome.admin")) {
+            msg(sender, "§c无权限");
             return;
         }
         if (args.length < 2) {
-            msg(player, "§c用法：/mh admin <reload|visit|unload|info|import-selfhome>");
+            msg(sender, "§c用法：/mh admin <reload|visit|unload|info|import-selfhome>");
             return;
         }
         switch (args[1].toLowerCase()) {
-            case "reload" -> adminReload(player);
-            case "visit" -> adminVisit(player, args);
-            case "unload" -> adminUnload(player, args);
-            case "info" -> adminInfo(player);
-            case "import-selfhome" -> adminImportSelfHome(player, args);
-            default -> msg(player, "§c未知管理子命令");
+            case "reload" -> adminReload(sender);
+            case "visit" -> {
+                if (sender instanceof Player p) {
+                    adminVisit(p, args);
+                } else {
+                    msg(sender, "§cadmin visit 需要传送到目标家园，仅游戏内管理员可用");
+                }
+            }
+            case "unload" -> adminUnload(sender, args);
+            case "info" -> adminInfo(sender);
+            case "import-selfhome" -> adminImportSelfHome(sender, args);
+            default -> msg(sender, "§c未知管理子命令");
         }
     }
 
@@ -590,8 +605,9 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage("§c目录不存在：" + serverRoot.getPath());
             return;
         }
-        if (!new File(dataDir, "playerdata").isDirectory()) {
-            sender.sendMessage("§c未找到 playerdata 目录：" + dataDir.getPath());
+        if (!new File(dataDir, "playerdata").isDirectory()
+                && !new File(dataDir, "config.yml").isFile()) {
+            sender.sendMessage("§c未找到 playerdata 目录或 config.yml：" + dataDir.getPath());
             return;
         }
         sender.sendMessage("§7开始导入 SelfHome 数据（异步）"
@@ -602,12 +618,12 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         mainExecutor);
     }
 
-    private void adminReload(Player player) {
+    private void adminReload(CommandSender sender) {
         try {
             plugin.reloadMistConfig();
-            msg(player, "§a配置已重载并校验通过");
+            msg(sender, "§a配置已重载并校验通过");
         } catch (IllegalArgumentException e) {
-            msg(player, "§c配置校验失败：" + e.getMessage());
+            msg(sender, "§c配置校验失败：" + e.getMessage());
         }
     }
 
@@ -624,43 +640,45 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         msg(player, "§c对方没有家园");
                         return;
                     }
-                    plugin.teleportService().teleportToHome(player, opt.get(), true);
+                    dev.mist.home.actions.HomeActions.goHome(plugin, player, opt.get(), true);
                 }, mainExecutor);
     }
 
-    private void adminUnload(Player player, String[] args) {
+    private void adminUnload(CommandSender sender, String[] args) {
         if (args.length < 3) {
-            msg(player, "§c用法：/mh admin unload <worldIndex>");
+            msg(sender, "§c用法：/mh admin unload <worldIndex>");
             return;
         }
         int index;
         try {
             index = Integer.parseInt(args[2]);
         } catch (NumberFormatException e) {
-            msg(player, "§cworldIndex 必须是数字");
+            msg(sender, "§cworldIndex 必须是数字");
             return;
         }
         if (index < 0 || index >= plugin.worldManager().poolWorlds().size()) {
-            msg(player, "§cworldIndex 超出范围（池大小 "
+            msg(sender, "§cworldIndex 超出范围（池大小 "
                     + plugin.worldManager().poolWorlds().size() + "）");
             return;
         }
         String name = plugin.worldManager().worldName(index);
         if (plugin.worldManager().forceUnload(index)) {
-            msg(player, "§a已触发卸载并归档 " + name);
+            msg(sender, "§a已触发卸载并归档 " + name);
         } else {
-            msg(player, "§c世界 " + name + " 未加载");
+            msg(sender, "§c世界 " + name + " 未加载");
         }
     }
 
-    private void adminInfo(Player player) {
-        msg(player, "§7存储：§f" + plugin.mistConfig().storageType()
+    private void adminInfo(CommandSender sender) {
+        msg(sender, "§7存储：§f" + plugin.mistConfig().storageType()
                 + " §7| 池世界：§f" + plugin.worldManager().poolWorlds().size()
                 + "（已加载 " + plugin.worldManager().loadedCount() + "）"
                 + " §7| 每世界槽位：§f" + plugin.mistConfig().homesPerWorld()
-                + " §7| 槽位：§f" + plugin.mistConfig().slotSize() + "格");
+                + " §7| 槽位：§f" + plugin.mistConfig().slotSize() + "格"
+                + (plugin.mistConfig().crossServerEnabled()
+                        ? " §7| 跨服：§f" + plugin.mistConfig().serverName() : ""));
         for (String line : plugin.worldManager().poolInfo().split("\n")) {
-            player.sendMessage(line);
+            sender.sendMessage(line);
         }
     }
 

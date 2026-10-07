@@ -83,37 +83,160 @@ public final class SelfHomeImporter {
         public int failed;
     }
 
+    /** 旧家园数据（数据源无关：MySQL 行 或 playerdata yml 解析产物） */
+    private record OldHome(String name, List<String> members, List<String> ops,
+                           List<String> denys, boolean isPublic, int level,
+                           double x, double y, double z, String server) {
+    }
+
     public Report doImport(File serverRoot, File dataDir, boolean cleanup) {
         Report report = new Report();
-        File pdDir = new File(dataDir, "playerdata");
-        File[] ymls = pdDir.listFiles((d, n) -> n.endsWith(".yml"));
-        if (ymls == null || ymls.length == 0) {
-            report.lines.add("§c未找到 playerdata yml: " + pdDir.getPath());
-            return report;
-        }
         var cfg = plugin.mistConfig();
         int span = SlotAllocator.regionSpan(cfg.slotSize());
         int maxTier = cfg.maxTier().level();
         File migratedDir = new File(serverRoot, "_已迁移");
 
-        for (File yml : ymls) {
-            String name = yml.getName().substring(0, yml.getName().length() - 4);
+        // ---- 汇总数据源：MySQL（BungeeCord 模式为权威源）优先，yml 补充 ----
+        List<OldHome> homes = new ArrayList<>();
+        java.util.Set<String> covered = new java.util.HashSet<>();
+        File selfCfg = new File(dataDir, "config.yml");
+        if (selfCfg.isFile()) {
+            YamlConfiguration sc = YamlConfiguration.loadConfiguration(selfCfg);
+            if ("mysql".equalsIgnoreCase(sc.getString("Type", ""))) {
+                List<OldHome> rows = loadMysql(sc, report);
+                for (OldHome h : rows) {
+                    homes.add(h);
+                    covered.add(h.name().toLowerCase());
+                }
+                report.lines.add("§7数据源: MySQL " + sc.getString("Database")
+                        + ".SelfHomeMain_Users（" + rows.size() + " 行）");
+            }
+        }
+        File pdDir = new File(dataDir, "playerdata");
+        File[] ymls = pdDir.listFiles((d, n) -> n.endsWith(".yml"));
+        int ymlExtra = 0;
+        if (ymls != null) {
+            for (File yml : ymls) {
+                String name = yml.getName().substring(0, yml.getName().length() - 4);
+                if (covered.contains(name.toLowerCase())) {
+                    continue;   // MySQL 已覆盖，跳过重复 yml
+                }
+                OldHome h = fromYml(name, yml);
+                if (h != null) {
+                    homes.add(h);
+                    ymlExtra++;
+                }
+            }
+        }
+        if (ymls != null && ymls.length > 0) {
+            report.lines.add("§7数据源: playerdata yml（补充 " + ymlExtra + " 个）");
+        }
+        if (homes.isEmpty()) {
+            report.lines.add("§c没有任何可导入的家园数据（MySQL 无行 / 无 yml）");
+            return report;
+        }
+
+        for (OldHome h : homes) {
             try {
-                Status st = importOne(name, yml, serverRoot, span, maxTier, report);
+                Status st = importOne(h, serverRoot, span, maxTier, report);
                 // 当次导入成功 或 早已存在记录（上次已导入）时，才允许移动旧世界目录
                 if (cleanup && (st == Status.IMPORTED || st == Status.ALREADY_EXISTS)) {
-                    moveToMigrated(name, serverRoot, migratedDir, report);
+                    moveToMigrated(h.name(), serverRoot, migratedDir, report);
                 }
             } catch (Exception e) {
                 report.failed++;
-                report.lines.add("§c" + name + " 导入失败: " + e.getMessage());
-                plugin.getLogger().log(Level.WARNING, "导入家园失败 " + name, e);
+                report.lines.add("§c" + h.name() + " 导入失败: " + e.getMessage());
+                plugin.getLogger().log(Level.WARNING, "导入家园失败 " + h.name(), e);
             }
         }
         report.lines.add(0, String.format("§a导入完成：成功 %d / 跳过 %d / 失败 %d（共 %d）%s",
-                report.imported, report.skipped, report.failed, ymls.length,
+                report.imported, report.skipped, report.failed, homes.size(),
                 cleanup ? "，成功项已移入 _已迁移/" : ""));
         return report;
+    }
+
+    /** 读旧 SelfHomeMain config.yml 里的 MySQL 连接信息，拉取 SelfHomeMain_Users 全表 */
+    private List<OldHome> loadMysql(YamlConfiguration sc, Report report) {
+        List<OldHome> out = new ArrayList<>();
+        String url = "jdbc:mysql://" + sc.getString("Host", "127.0.0.1")
+                + ":" + sc.getInt("Port", 3306)
+                + "/" + sc.getString("Database")
+                + "?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8";
+        String user = sc.getString("Username", "root");
+        String pass = sc.getString("Password", "");
+        try {
+            // 驱动被 shade 重定位过，先试新包名再回退原始包名
+            try {
+                Class.forName("dev.mist.home.libs.mysql.cj.jdbc.Driver");
+            } catch (ClassNotFoundException ignored) {
+                Class.forName("com.mysql.cj.jdbc.Driver");
+            }
+            try (java.sql.Connection c = java.sql.DriverManager.getConnection(url, user, pass);
+                 java.sql.Statement st = c.createStatement();
+                 java.sql.ResultSet rs = st.executeQuery("SELECT * FROM SelfHomeMain_Users")) {
+                while (rs.next()) {
+                    out.add(new OldHome(
+                            rs.getString("Name"),
+                            splitCsv(rs.getString("Members")),
+                            splitCsv(rs.getString("OP")),
+                            splitCsv(rs.getString("Denys")),
+                            Boolean.parseBoolean(rs.getString("Public")),
+                            parseInt(rs.getString("Level"), 1),
+                            parseDouble(rs.getString("X")),
+                            parseDouble(rs.getString("Y")),
+                            parseDouble(rs.getString("Z")),
+                            String.valueOf(rs.getString("Server") == null
+                                    ? "" : rs.getString("Server"))));
+                }
+            }
+        } catch (Exception e) {
+            report.lines.add("§c读取旧 MySQL 失败: " + e.getMessage());
+            plugin.getLogger().log(Level.WARNING, "读取 SelfHomeMain MySQL 失败", e);
+        }
+        return out;
+    }
+
+    private OldHome fromYml(String name, File yml) {
+        try {
+            YamlConfiguration y = YamlConfiguration.loadConfiguration(yml);
+            return new OldHome(name,
+                    nameList(y, "Members"), nameList(y, "OP"), nameList(y, "Denys"),
+                    y.getBoolean("Public"), y.getInt("Level", 1),
+                    y.getDouble("X"), y.getDouble("Y"), y.getDouble("Z"),
+                    y.getString("Server", ""));
+        } catch (Exception e) {
+            plugin.getLogger().log(Level.WARNING, "解析 yml 失败 " + name, e);
+            return null;
+        }
+    }
+
+    private static List<String> splitCsv(String s) {
+        if (s == null || s.isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String p : s.split(",")) {
+            if (!p.isBlank()) {
+                out.add(p.trim());
+            }
+        }
+        return out;
+    }
+
+    private static int parseInt(String s, int def) {
+        try {
+            return s == null ? def : Integer.parseInt(s.trim());
+        } catch (NumberFormatException e) {
+            return def;
+        }
+    }
+
+    private static double parseDouble(String s) {
+        try {
+            return s == null ? 0 : Double.parseDouble(s.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** 把旧世界目录整体移入 _已迁移/（同卷为瞬时 rename；跨卷报失败不动数据） */
@@ -140,8 +263,9 @@ public final class SelfHomeImporter {
     private enum Status { IMPORTED, ALREADY_EXISTS, SKIPPED }
 
     /** @return 导入结果状态 */
-    private Status importOne(String name, File yml, File serverRoot,
-                              int span, int maxTier, Report report) throws Exception {
+    private Status importOne(OldHome oh, File serverRoot,
+                             int span, int maxTier, Report report) throws Exception {
+        String name = oh.name();
         // 1. 旧世界目录必须存在（服务器根下同名文件夹）
         File worldDir = new File(serverRoot, name);
         if (!new File(worldDir, "region").isDirectory()) {
@@ -151,13 +275,12 @@ public final class SelfHomeImporter {
         }
 
         // 2. 旧数据
-        YamlConfiguration y = YamlConfiguration.loadConfiguration(yml);
-        double sx = y.getDouble("X");
-        double sy = y.getDouble("Y");
-        double sz = y.getDouble("Z");
-        int level = y.getInt("Level", 1);
-        boolean isPublic = y.getBoolean("Public");
-        String server = y.getString("Server", "");
+        double sx = oh.x();
+        double sy = oh.y();
+        double sz = oh.z();
+        int level = oh.level();
+        boolean isPublic = oh.isPublic();
+        String server = oh.server();
 
         // 3. 玩家 UUID（离线模式确定性）
         OfflinePlayer owner = Bukkit.getOfflinePlayer(name);
@@ -177,7 +300,8 @@ public final class SelfHomeImporter {
 
         // 5. 先用临时 Home 算出存档目录并把文件拷好——拷贝失败不留半成品记录
         Home probe = new Home(0, ownerUuid, name, 0, 0, "selfhome-import",
-                HomeVisibility.PRIVATE, 0, 0, 0, 0f, 0f, 0);
+                HomeVisibility.PRIVATE, 0, 0, 0, 0f, 0f, 0,
+                plugin.mistConfig().serverName());
         Path homeDir = plugin.worldManager().archive().homeDir(probe);
         List<String> copied;
         try {
@@ -209,7 +333,8 @@ public final class SelfHomeImporter {
         try {
             int slot = plugin.storage().allocateSlot();
             home = plugin.storage().createHome(ownerUuid, name + "的家园", slot, tier,
-                    "selfhome-import", offX, spawnY, offZ);
+                    "selfhome-import", offX, spawnY, offZ,
+                    plugin.mistConfig().serverName());
             if (isPublic) {
                 home.setVisibility(HomeVisibility.PUBLIC);
                 plugin.storage().updateHome(home);
@@ -217,17 +342,17 @@ public final class SelfHomeImporter {
             plugin.homeService().cache(home);
 
             // 角色迁移：Members→MEMBER，OP→OPERATOR，Denys→BANNED
-            for (String m : nameList(y, "Members")) {
+            for (String m : oh.members()) {
                 if (m.equalsIgnoreCase(name)) continue;
                 plugin.storage().setRole(home.id(), uuidOf(m), HomeRole.MEMBER);
                 roles++;
             }
-            for (String m : nameList(y, "OP")) {
+            for (String m : oh.ops()) {
                 if (m.equalsIgnoreCase(name)) continue;
                 plugin.storage().setRole(home.id(), uuidOf(m), HomeRole.OPERATOR);
                 roles++;
             }
-            for (String m : nameList(y, "Denys")) {
+            for (String m : oh.denys()) {
                 plugin.storage().ban(home.id(), uuidOf(m));
                 roles++;
             }

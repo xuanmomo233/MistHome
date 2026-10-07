@@ -49,7 +49,8 @@ public class SqliteStorage extends JdbcStorage {
                   spawn_z     REAL    NOT NULL DEFAULT 0,
                   spawn_yaw   REAL    NOT NULL DEFAULT 0,
                   spawn_pitch REAL    NOT NULL DEFAULT 0,
-                  created_at  INTEGER NOT NULL
+                  created_at  INTEGER NOT NULL,
+                  server      VARCHAR(64) NOT NULL DEFAULT ''
                 )
                 """,
                 """
@@ -67,6 +68,14 @@ public class SqliteStorage extends JdbcStorage {
                   player_uuid VARCHAR(36) NOT NULL,
                   banned_at   INTEGER     NOT NULL,
                   PRIMARY KEY (home_id, player_uuid)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS pending_actions (
+                  player_uuid VARCHAR(36) NOT NULL,
+                  home_id     INTEGER     NOT NULL,
+                  created_at  INTEGER     NOT NULL,
+                  PRIMARY KEY (player_uuid)
                 )
                 """,
                 "CREATE INDEX IF NOT EXISTS idx_members_player ON home_members(player_uuid)"

@@ -56,10 +56,15 @@ public class PublicHomesMenu extends Menu {
             OfflinePlayer owner = Bukkit.getOfflinePlayer(home.owner());
             String ownerName = owner.getName() != null ? owner.getName() : "未知";
             var tier = plugin.mistConfig().tier(home.tierLevel());
-            item(i, Items.skull(owner, "§f" + home.name(),
+            java.util.List<String> lore = new java.util.ArrayList<>(List.of(
                     "§7主人：§f" + ownerName,
-                    "§7档位：§f" + tier.name(),
-                    "§e点击进入参观"), e ->
+                    "§7档位：§f" + tier.name()));
+            if (plugin.mistConfig().crossServerEnabled()) {
+                lore.add("§7服务器：§f" + (home.server().isEmpty()
+                        ? plugin.mistConfig().serverName() : home.server()));
+            }
+            lore.add("§e点击进入参观");
+            item(i, Items.skull(owner, "§f" + home.name(), lore), e ->
                     HomeActions.visit(plugin, (Player) e.getWhoClicked(), home));
         }
 

@@ -7,6 +7,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.scheduler.BukkitTask;
@@ -17,6 +18,7 @@ import dev.mist.home.world.SlotAllocator;
 import org.bukkit.World;
 
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -217,5 +219,48 @@ public class TeleportService implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         cancelWarmup(e.getPlayer().getUniqueId());
+    }
+
+    /**
+     * 跨服跳服握手消费端：玩家落地本服后查 pending_actions，
+     * 有待办家园则延迟 1 秒直接传送（免吟唱/免冷却）。
+     */
+    @EventHandler
+    public void onJoin(PlayerJoinEvent e) {
+        if (!plugin.mistConfig().crossServerEnabled()) {
+            return;
+        }
+        UUID uuid = e.getPlayer().getUniqueId();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            Optional<Long> pending = plugin.storage().pollPendingAction(uuid);
+            if (pending.isEmpty()) {
+                return;
+            }
+            Optional<Home> home = plugin.storage().findHomeById(pending.get());
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                Player p = Bukkit.getPlayer(uuid);
+                if (p == null || !p.isOnline()) {
+                    return;
+                }
+                if (home.isEmpty()) {
+                    p.sendMessage(plugin.mistConfig().prefix() + "§c目标家园已不存在");
+                    return;
+                }
+                Home h = home.get();
+                // 玩家没落在家园归属服（Bungee 重定向/手动进了其他服）：
+                // 重新写 pending 并 Connect，绝不在本机停放远程家
+                if (dev.mist.home.actions.HomeActions.isRemoteHome(plugin, h)) {
+                    dev.mist.home.actions.HomeActions.jumpToHomeServer(plugin, p, h);
+                    return;
+                }
+                if (dev.mist.home.actions.HomeActions.isUnclaimedElsewhere(plugin, h)) {
+                    p.sendMessage(plugin.mistConfig().prefix()
+                            + "§c家园归属服务器尚未登记，请稍后再试");
+                    return;
+                }
+                plugin.homeService().cache(h);
+                teleportToHome(p, h, true);
+            }, 20L);
+        });
     }
 }

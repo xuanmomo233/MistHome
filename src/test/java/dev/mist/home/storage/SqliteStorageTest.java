@@ -47,7 +47,7 @@ class SqliteStorageTest {
 
     private Home createHome(UUID owner, int slot) {
         return storage.createHome(owner, "家园" + slot, slot, 0, null,
-                0.5, 65.0, 0.5);
+                0.5, 65.0, 0.5, "test-server");
     }
 
     // ---------- home CRUD ----------
@@ -217,5 +217,66 @@ class SqliteStorageTest {
         storage.ban(home.id(), p);
         assertDoesNotThrow(() -> storage.ban(home.id(), p));
         assertTrue(storage.isBanned(home.id(), p));
+    }
+
+    // ---------- 跨服 ----------
+
+    @Test
+    void pendingActionRoundTripAndConsumedOnce() {
+        Home home = createHome(uuid(), 0);
+        UUID player = uuid();
+
+        assertTrue(storage.pollPendingAction(player).isEmpty());
+
+        storage.setPendingAction(player, home.id());
+        // 覆盖写：后写覆盖前写（一个玩家只保留一个待办）
+        Home other = createHome(uuid(), 1);
+        storage.setPendingAction(player, other.id());
+
+        assertEquals(Optional.of(other.id()), storage.pollPendingAction(player));
+        // 消费后即删除
+        assertTrue(storage.pollPendingAction(player).isEmpty());
+    }
+
+    @Test
+    void insertHomePreservesIdAndServer() {
+        Home src = createHome(uuid(), 0);
+        storage.deleteHome(src.id());
+
+        Home withServer = new Home(src.id(), src.owner(), src.name(), src.slotIndex(),
+                src.tierLevel(), src.template(), src.visibility(),
+                src.spawnX(), src.spawnY(), src.spawnZ(),
+                src.spawnYaw(), src.spawnPitch(), src.createdAt(), "server-b");
+        storage.insertHome(withServer);
+
+        Home loaded = storage.findHomeById(src.id()).orElseThrow();
+        assertEquals(src.id(), loaded.id());
+        assertEquals("server-b", loaded.server());
+    }
+
+    @Test
+    void updateHomeServerClaimsOwnership() {
+        Home home = createHome(uuid(), 0);
+        assertEquals("test-server", home.server());
+
+        storage.updateHomeServer(home.id(), "server-a");
+        assertEquals("server-a", storage.findHomeById(home.id()).orElseThrow().server());
+    }
+
+    @Test
+    void listMemberRolesAndBannedForMigration() {
+        Home home = createHome(uuid(), 0);
+        UUID m1 = uuid();
+        UUID m2 = uuid();
+        UUID banned = uuid();
+        storage.setRole(home.id(), m1, HomeRole.MEMBER);
+        storage.setRole(home.id(), m2, HomeRole.OPERATOR);
+        storage.ban(home.id(), banned);
+
+        var roles = storage.listMemberRoles(home.id());
+        assertEquals(HomeRole.MEMBER, roles.get(m1));
+        assertEquals(HomeRole.OPERATOR, roles.get(m2));
+        assertEquals(List.of(banned), storage.listBanned(home.id()));
+        assertEquals(1, storage.listAllHomes().size());
     }
 }

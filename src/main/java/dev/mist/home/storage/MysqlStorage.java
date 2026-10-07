@@ -65,7 +65,8 @@ public class MysqlStorage extends JdbcStorage {
                   spawn_z     DOUBLE NOT NULL DEFAULT 0,
                   spawn_yaw   FLOAT  NOT NULL DEFAULT 0,
                   spawn_pitch FLOAT  NOT NULL DEFAULT 0,
-                  created_at  BIGINT NOT NULL
+                  created_at  BIGINT NOT NULL,
+                  server      VARCHAR(64) NOT NULL DEFAULT ''
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """,
                 """
@@ -84,6 +85,14 @@ public class MysqlStorage extends JdbcStorage {
                   player_uuid VARCHAR(36) NOT NULL,
                   banned_at   BIGINT      NOT NULL,
                   PRIMARY KEY (home_id, player_uuid)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS pending_actions (
+                  player_uuid VARCHAR(36) NOT NULL,
+                  home_id     BIGINT      NOT NULL,
+                  created_at  BIGINT      NOT NULL,
+                  PRIMARY KEY (player_uuid)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
         };

@@ -14,7 +14,9 @@ import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -68,12 +70,27 @@ public abstract class JdbcStorage implements Storage {
         configurePool(hc);
         dataSource = new HikariDataSource(hc);
         createTables();
+        migrateSchema();
     }
 
     void createTables() throws SQLException {
         try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
             for (String sql : ddl()) {
                 st.execute(sql);
+            }
+        }
+    }
+
+    /**
+     * 存量库结构迁移：旧版本 homes 表没有 server 列，
+     * 探测失败后 ALTER 补上（SQLite/MySQL 通用写法）。
+     */
+    void migrateSchema() throws SQLException {
+        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
+            try {
+                st.executeQuery("SELECT server FROM homes WHERE 1=0");
+            } catch (SQLException missing) {
+                st.execute("ALTER TABLE homes ADD COLUMN server VARCHAR(64) NOT NULL DEFAULT ''");
             }
         }
     }
@@ -102,7 +119,8 @@ public abstract class JdbcStorage implements Storage {
                 HomeVisibility.of(rs.getString("visibility")),
                 rs.getDouble("spawn_x"), rs.getDouble("spawn_y"), rs.getDouble("spawn_z"),
                 rs.getFloat("spawn_yaw"), rs.getFloat("spawn_pitch"),
-                rs.getLong("created_at"));
+                rs.getLong("created_at"),
+                rs.getString("server"));
     }
 
     private static Optional<Home> firstHome(PreparedStatement ps) throws SQLException {
@@ -213,10 +231,11 @@ public abstract class JdbcStorage implements Storage {
 
     @Override
     public Home createHome(UUID owner, String name, int slotIndex, int tierLevel,
-                           String template, double spawnX, double spawnY, double spawnZ) {
+                           String template, double spawnX, double spawnY, double spawnZ,
+                           String server) {
         String sql = "INSERT INTO homes(owner_uuid, name, slot_index, tier_level, template,"
-                + " visibility, spawn_x, spawn_y, spawn_z, spawn_yaw, spawn_pitch, created_at)"
-                + " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
+                + " visibility, spawn_x, spawn_y, spawn_z, spawn_yaw, spawn_pitch, created_at,"
+                + " server) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)";
         long createdAt = System.currentTimeMillis();
         try (Connection c = conn();
              PreparedStatement ps = c.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -232,6 +251,7 @@ public abstract class JdbcStorage implements Storage {
             ps.setFloat(10, 0f);
             ps.setFloat(11, 0f);
             ps.setLong(12, createdAt);
+            ps.setString(13, server == null ? "" : server);
             ps.executeUpdate();
 
             long id = -1;
@@ -241,7 +261,7 @@ public abstract class JdbcStorage implements Storage {
                 }
             }
             return new Home(id, owner, name, slotIndex, tierLevel, template,
-                    HomeVisibility.PRIVATE, spawnX, spawnY, spawnZ, 0f, 0f, createdAt);
+                    HomeVisibility.PRIVATE, spawnX, spawnY, spawnZ, 0f, 0f, createdAt, server);
         } catch (SQLException e) {
             throw wrap(e);
         }
@@ -450,6 +470,153 @@ public abstract class JdbcStorage implements Storage {
             ps.setLong(1, homeId);
             ps.setString(2, player.toString());
             ps.executeUpdate();
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    // ---------- 跨服待办 ----------
+
+    @Override
+    public void setPendingAction(UUID player, long homeId) {
+        try (Connection c = conn()) {
+            boolean auto = c.getAutoCommit();
+            c.setAutoCommit(false);
+            try (PreparedStatement del = c.prepareStatement(
+                         "DELETE FROM pending_actions WHERE player_uuid=?");
+                 PreparedStatement ins = c.prepareStatement(
+                         "INSERT INTO pending_actions(player_uuid, home_id, created_at)"
+                                 + " VALUES(?,?,?)")) {
+                del.setString(1, player.toString());
+                del.executeUpdate();
+                ins.setString(1, player.toString());
+                ins.setLong(2, homeId);
+                ins.setLong(3, System.currentTimeMillis());
+                ins.executeUpdate();
+                c.commit();
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(auto);
+            }
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    @Override
+    public Optional<Long> pollPendingAction(UUID player) {
+        try (Connection c = conn()) {
+            boolean auto = c.getAutoCommit();
+            c.setAutoCommit(false);
+            Optional<Long> homeId = Optional.empty();
+            try (PreparedStatement sel = c.prepareStatement(
+                         "SELECT home_id FROM pending_actions WHERE player_uuid=?");
+                 PreparedStatement del = c.prepareStatement(
+                         "DELETE FROM pending_actions WHERE player_uuid=?")) {
+                sel.setString(1, player.toString());
+                try (ResultSet rs = sel.executeQuery()) {
+                    if (rs.next()) {
+                        homeId = Optional.of(rs.getLong(1));
+                    }
+                }
+                del.setString(1, player.toString());
+                del.executeUpdate();
+                c.commit();
+            } catch (SQLException e) {
+                c.rollback();
+                throw e;
+            } finally {
+                c.setAutoCommit(auto);
+            }
+            return homeId;
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    // ---------- 存储后端迁移 ----------
+
+    @Override
+    public List<Home> listAllHomes() {
+        String sql = "SELECT * FROM homes";
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            return listHomes(ps);
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    @Override
+    public Home insertHome(Home home) {
+        String sql = "INSERT INTO homes(id, owner_uuid, name, slot_index, tier_level, template,"
+                + " visibility, spawn_x, spawn_y, spawn_z, spawn_yaw, spawn_pitch, created_at,"
+                + " server) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, home.id());
+            ps.setString(2, home.owner().toString());
+            ps.setString(3, home.name());
+            ps.setInt(4, home.slotIndex());
+            ps.setInt(5, home.tierLevel());
+            ps.setString(6, home.template());
+            ps.setString(7, home.visibility().name());
+            ps.setDouble(8, home.spawnX());
+            ps.setDouble(9, home.spawnY());
+            ps.setDouble(10, home.spawnZ());
+            ps.setFloat(11, home.spawnYaw());
+            ps.setFloat(12, home.spawnPitch());
+            ps.setLong(13, home.createdAt());
+            ps.setString(14, home.server());
+            ps.executeUpdate();
+            return home;
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    @Override
+    public Map<UUID, HomeRole> listMemberRoles(long homeId) {
+        String sql = "SELECT player_uuid, role FROM home_members WHERE home_id=?";
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, homeId);
+            Map<UUID, HomeRole> result = new HashMap<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.put(UUID.fromString(rs.getString(1)),
+                            HomeRole.valueOf(rs.getString(2)));
+                }
+            }
+            return result;
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    @Override
+    public void updateHomeServer(long homeId, String server) {
+        String sql = "UPDATE homes SET server=? WHERE id=?";
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setString(1, server == null ? "" : server);
+            ps.setLong(2, homeId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw wrap(e);
+        }
+    }
+
+    @Override
+    public List<UUID> listBanned(long homeId) {
+        String sql = "SELECT player_uuid FROM home_bans WHERE home_id=?";
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, homeId);
+            List<UUID> result = new ArrayList<>();
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add(UUID.fromString(rs.getString(1)));
+                }
+            }
+            return result;
         } catch (SQLException e) {
             throw wrap(e);
         }
