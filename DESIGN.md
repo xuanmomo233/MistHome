@@ -5,8 +5,9 @@
 ## 1. 设计目标
 
 - 每个玩家拥有独立的家园区域，供自由建造生活
-- **副本式世界生命周期**：家园世界按需加载、无人超时卸载，避免常驻世界吃资源
-- **共享虚空世界分区**：所有家园挤在少数几个虚空世界中（参考 MythicDungeons OneWorldDungeons），避免服务器内创建过多世界造成干扰和管理负担
+- **世界池 + 插件存档**：家园数据以 mca 文件组形式存于插件目录（唯一真身），
+  少量池世界仅作为运行画布；家园按需停放入空闲槽位、无人超时卸载归档、
+  世界目录删除重建 —— 常驻世界数量有界，家园存档数量无界
 
 ## 2. 参考项目调研
 
@@ -22,8 +23,8 @@
 | 决策项 | 结论 |
 |---|---|
 | 平台 | Mohist 1.20.1，编译依赖 `spigot-api:1.20.1` |
-| 世界架构 | 共享虚空世界分区 |
-| 世界生命周期 | 无人超时卸载（副本式） |
+| 世界架构 | 世界池：插件目录存档 + region 对齐槽位 + 一次性使用 + 卸载删除重建 |
+| 世界生命周期 | 按需停放加载、无人超时卸载归档（副本式） |
 | 地块形态 | 预设模板粘贴（WorldEdit 软依赖，降级空平台） |
 | 尺寸体系 | 分档升级 + 预留空间（槽位固定，软边界扩缩） |
 | 边界隔离 | 事件拦截 + ProtocolLib 世界边界包（降级粒子） |
@@ -35,61 +36,58 @@
 | 存储 | SQLite 默认 + MySQL 可选（HikariCP shade 进 jar） |
 | GUI | 原版箱子菜单 |
 
-## 3. 世界分区布局
+## 3. 存储布局与槽位几何
 
 ```
-世界 misthome_0 内（homes-per-world=64 → 8x8 网格）：
+plugins/MistHome/homes/<玩家名_uuid8>/        家园存档（唯一真身）
+    region/r.0.0.mca  r.1.0.mca  ...        方块+方块实体（归一化本地坐标）
+    entities/r.0.0.mca ...                  实体（机械动力装配体在此）
+    poi/r.0.0.mca ...                       兴趣点
+    meta.json                               文件清单+时间戳
 
- pitch = slot-size + gap = 512 + 64 = 576 格
-
-   ┌─────────┐  ┌─────────┐       ┌─────────┐
-   │ home 0  │  │ home 1  │  ...  │ home 7  │   每格 = 576x576 槽位
-   │(可用128)│  │(可用256)│       │(可用512)│   家园软边界居中，未解锁区为预留
-   └─────────┘  └─────────┘       └─────────┘
-   ┌─────────┐
-   │ home 8  │  ...
-   └─────────┘
+池世界 misthome_0/1/...                     运行画布（可随时删除重建）
+    region/r.x.z.mca                        停放时把家园文件写到槽位对应坐标
 ```
 
-- 全局槽位索引 `slotIndex` 递增分配（取最小未占用值，删除家园后槽位可复用）
-- `worldIndex = slotIndex / homesPerWorld`；`innerIndex = slotIndex % homesPerWorld`
-- 网格坐标 `gridX = innerIndex % cols`，`gridZ = innerIndex / cols`，网格整体以世界原点为中心对称铺开
-- 世界文件夹 `misthome_0`、`misthome_1`... 位于服务端根目录，**按需创建**，不在启动时批量生成
-- 实现见 `SlotAllocator` / `HomeRegion`
+- 槽位边长 `slot-size` 必须是 **512 的倍数**（1024 = 2×2 region），槽位紧密排列无 gap
+- 每个槽位独占 `(slotSize/512)²` 组 mca 文件 → 家园与物理位置完全解耦，可自由拼接迁移
+- 存档文件名使用槽位**本地坐标**（r.0.0 起），恢复时按目标槽位基坐标重命名
+- 槽内可用半径上限 = `slotSize/2 - 模拟距离`（默认 352），保证玩家够不到邻居空槽
+- 实现见 `SlotAllocator`（region 对齐数学）/ `HomeArchiveService`（文件搬运）
 
-## 4. 世界生命周期（副本式）
+## 4. 停放生命周期
 
 ```
 玩家请求进入家园
    │
-   ├─ 家园所在世界已加载？── 是 ──→ 传送至家园出生点
-   │                     │
-   │                     └─ 否 → WorldCreator(generator=VoidGenerator).createWorld()
-   │                              → 应用世界规则 → 传送
-   │
-世界内最后一名玩家离开（传送/下线）
-   │
-   ├─ sweep 周期任务（默认 20s）记录 emptySince 时间戳
-   │
-   └─ 空载持续超过 unload-delay-seconds（默认 300s）
-        → world.save() → Bukkit.unloadWorld(world, true)
-        → 卸载失败（被其他插件取消/持有引用）→ WARN 日志 + 下轮重试
+   └─ ensureParked(home)
+        ├─ 已停放 → 确保世界加载 → （恢复补缺）→ 传送
+        └─ 未停放 → 分配空闲槽位（已加载世界优先 → 未加载世界 → 自动扩池）
+                  → 台账登记 → 世界加载 → 存档文件写入槽位 → 传送
+
+世界内最后一名玩家离开 → sweep 记录 emptySince
+   └─ 空载超过 unload-delay-seconds
+        → world.save() → unloadWorld
+        → 异步：各停放家园归档回插件目录 → 解除停放
+        → 全部归档成功 → 删除世界目录（delete-world-on-unload）
 ```
 
-要点：
+铁律与兜底：
 
-- **加载**：`HomeWorldManager.ensureLoaded(worldIndex)` 返回 `CompletableFuture`，并发请求共享同一 Future，主线程执行 WorldCreator。虚空世界加载本身很轻（无区块生成），主要耗时在磁盘读取
-- **卸载判定**：不做逐个事件埋点，用周期兜底扫描覆盖所有离开途径（传送、下线、崩溃）
-- **卸载失败**：参考 MythicDungeons，其他插件可能取消 `WorldUnloadEvent` 或持有世界引用导致泄漏 —— 失败时告警并持续重试
-- **关服**：`shutdown()` 将所有家园世界内玩家送回主世界出生点后逐一卸载保存
-- **世界规则**：加载时应用 `DO_MOB_SPAWNING=false`、`DO_FIRE_TICK=false`、`MOB_GRIEFING=false`、`DO_WEATHER_CYCLE=false`、`DO_DAYLIGHT_CYCLE=false` + 锁定时间（可配置化）
+- **槽位一次性使用**：世界一次生命周期内每个槽位只写一次文件、永不覆写，
+  彻底绕开"运行中覆写已打开 mca"和"脏槽位复用"两类损坏
+- **污染标记**：玩家模拟距离覆盖到空闲槽位 → 标记作废不再停放
+  （正常配置下 margin≥模拟距离，永不触发；自定义小 margin 时兜底）
+- **卸载失败**：其他插件可能取消 WorldUnloadEvent → WARN + 下轮重试
+- **崩溃恢复**：`pool-state.json` 台账记录停放关系；启动时扫描世界目录残留，
+  台账对应文件重新归档、孤儿文件隔离到 `recovery/`
+- **关服**：同步执行归档+删目录（不依赖异步调度器）
 
 ## 5. 槽位与升级
 
-- 每个家园的物理槽位**始终按最大档预留**（slot-size 512）
-- 当前档位决定**软边界半径**（如 64 → 128 → 256）
-- 升级 = 修改档位字段 + 扩大边界，**零数据迁移**
-- 事件拦截保护的范围 = 当前档可用半径；预留区内也禁止操作（防止提前侵占）
+- 物理槽位由停放台账动态决定；DB 中 `slot_index` 仅作唯一序号
+- 出生点存储为**相对槽位中心偏移**（spawn_x/z 偏移 + spawn_y 绝对高度）
+- 升级 = 修改档位 + 扩大软边界，零数据迁移、与停放位置无关
 
 ## 6. 权限体系
 
@@ -189,8 +187,9 @@ dev.mist.home
 ├── MistHomePlugin            主类（生命周期装配 + 热重载）
 ├── config/MistConfig         配置读取 + 校验
 ├── model/                    Home / HomeRole / HomeTier / HomeVisibility
-├── world/                    HomeWorldManager / VoidGenerator / SlotAllocator / HomeRegion
-├── home/HomeService          懒加载缓存与坐标反查（byOwner/byId/bySlot/roleCache）
+├── world/                    HomeWorldManager(池化) / VoidGenerator / SlotAllocator / HomeRegion
+├── archive/HomeArchiveService 家园 mca 归档/恢复/manifest/崩溃核对
+├── home/HomeService          懒加载缓存与坐标反查（byOwner/byId/roleCache + 停放表）
 ├── storage/                  Storage 接口 / JdbcStorage / SqliteStorage / MysqlStorage
 │                             / StorageException / DuplicateKeyException
 ├── protect/ProtectionListener 区域保护全事件拦截
@@ -206,12 +205,14 @@ dev.mist.home
 
 ## 13. 风险与注意事项
 
-1. **世界卸载泄漏**：Forge mod 或其他插件可能持有世界/区块引用或取消 `WorldUnloadEvent`，导致卸载失败 → 已实现告警+重试；排查时用 MythicDungeons 思路（先确认不是自家代码引用）
-2. **WorldEdit on Mohist**：必须安装 Bukkit 版 WE；Forge 端 WE mod 不提供 Bukkit 插件 API；混端下 WE 兼容性需实测，模板含模组方块时行为待验证
-3. **ProtocolLib on Mohist**：Mohist 对 Bukkit 插件兼容性较好但仍需实测边界包（`ClientboundInitializeBorder`）；失败自动降级粒子
-4. **世界文件夹**：必须位于服务端根目录（Bukkit WorldContainer 限制），命名 `misthome_N`；不要与其他插件世界名冲突
-5. **实体/掉落物**：虚空世界 unload 前 save() 保证持久化；挂机农场在卸载后停摆（这正是设计目的）
-6. **并发**：所有世界加载/卸载必须在主线程；DB 操作全部异步；HomeService 缓存用 ConcurrentHashMap
+1. **文件操作时机**：世界加载期间 region 文件句柄归 Minecraft 所有，插件不得碰；
+   所有归档在卸载成功后执行，所有恢复在世界加载前/文件缺失时执行
+2. **归档失败**：归档失败的家园不解除停放、不删世界目录（数据安全第一），人工介入
+3. **世界卸载泄漏**：Forge mod 可能取消 `WorldUnloadEvent` → 告警+重试
+4. **隔离边界**：同池世界中多个活跃家园仍共享该世界 tick 线程；
+   `slotSize - 2*maxRadius < 模拟距离` 时贴边家园会互相加载机械 → 启动告警
+5. **WorldEdit on Mohist**：必须安装 Bukkit 版 WE；混端兼容性需实测
+6. **并发**：世界加载/卸载/停放分配在主线程；归档文件 IO 与 DB 操作异步
 
 ## 14. 开发里程碑
 
@@ -223,3 +224,5 @@ dev.mist.home
 - [x] M6 边界：ProtocolLib 发包 + 粒子降级
 - [x] M7 公共列表/参观 + upgrade 经济闭环
 - [x] M8 管理员工具 + 收尾（热重载、文档）
+- [x] M9 世界池重构：插件目录 mca 存档 + region 对齐槽位 + 一次性使用
+       + 污染标记 + 卸载归档删世界 + 崩溃核对 + spawn 偏移存储

@@ -8,7 +8,6 @@ import dev.mist.home.storage.DuplicateKeyException;
 import dev.mist.home.storage.Storage;
 import dev.mist.home.storage.StorageException;
 import dev.mist.home.world.HomeRegion;
-import dev.mist.home.world.SlotAllocator;
 
 import java.util.Map;
 import java.util.Optional;
