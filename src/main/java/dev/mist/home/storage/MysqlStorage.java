@@ -28,7 +28,8 @@ public class MysqlStorage extends JdbcStorage {
                 + ":" + s.getInt("port", 3306)
                 + "/" + s.getString("database", "misthome")
                 + "?useSSL=" + s.getBoolean("use-ssl", false)
-                + "&characterEncoding=utf8&serverTimezone=UTC";
+                + "&characterEncoding=utf8&serverTimezone=UTC"
+                + "&createDatabaseIfNotExist=true";
     }
 
     @Override
