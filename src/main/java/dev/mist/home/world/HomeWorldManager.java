@@ -9,9 +9,10 @@ import dev.mist.home.MistHomePlugin;
 import dev.mist.home.config.MistConfig;
 
 import java.io.File;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 
 /**
@@ -32,11 +33,11 @@ public class HomeWorldManager {
     private final MistConfig config;
 
     /** worldIndex -> 已加载的世界 */
-    private final Map<Integer, World> loaded = new HashMap<>();
+    private final Map<Integer, World> loaded = new ConcurrentHashMap<>();
     /** worldIndex -> 世界最后变空的时间戳（毫秒），未变空则无记录 */
-    private final Map<Integer, Long> emptySince = new HashMap<>();
+    private final Map<Integer, Long> emptySince = new ConcurrentHashMap<>();
     /** worldIndex -> 正在进行的加载任务（防止并发加载同一世界） */
-    private final Map<Integer, CompletableFuture<World>> loading = new HashMap<>();
+    private final Map<Integer, CompletableFuture<World>> loading = new ConcurrentHashMap<>();
 
     private BukkitTask sweepTask;
 
@@ -124,7 +125,8 @@ public class HomeWorldManager {
         long now = System.currentTimeMillis();
         long delayMs = config.unloadDelaySeconds() * 1000L;
 
-        for (Map.Entry<Integer, World> entry : loaded.entrySet()) {
+        // 复制 entrySet 防止 unloadWorld 修改 loaded 时触发 ConcurrentModificationException
+        for (Map.Entry<Integer, World> entry : new ArrayList<>(loaded.entrySet())) {
             int index = entry.getKey();
             World world = entry.getValue();
 
@@ -174,7 +176,10 @@ public class HomeWorldManager {
             sweepTask.cancel();
             sweepTask = null;
         }
-        World fallback = Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().get(0);
+        World fallback = Bukkit.getWorlds().stream()
+                .filter(w -> !isHomeWorld(w.getName()))
+                .findFirst()
+                .orElse(null);
         for (Map.Entry<Integer, World> entry : loaded.entrySet()) {
             World world = entry.getValue();
             for (Player p : world.getPlayers()) {

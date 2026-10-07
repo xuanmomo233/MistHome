@@ -27,17 +27,37 @@ public class MistConfig {
         if (list.isEmpty()) {
             return;
         }
+        int maxRadius = slotSize() / 2;
         List<HomeTier> parsed = new ArrayList<>();
         for (Map<?, ?> map : list) {
             int level = intOf(map.get("level"), parsed.size());
             Object nameObj = map.get("name");
             String name = nameObj != null ? String.valueOf(nameObj) : "档位" + level;
             int radius = intOf(map.get("radius"), 64);
+            if (radius > maxRadius) {
+                throw new IllegalArgumentException("tiers." + level + ".radius (" + radius
+                        + ") 超过 slot-size/2 上限 (" + maxRadius + ")");
+            }
             double price = map.get("upgrade-price") instanceof Number n ? n.doubleValue() : 0;
             parsed.add(new HomeTier(level, name, radius, price));
         }
         parsed.sort(Comparator.comparingInt(HomeTier::level));
         this.tiers = List.copyOf(parsed);
+    }
+
+    /** 校验关键配置：家园数/网格、档位半径等 */
+    public void validate() {
+        int hpw = homesPerWorld();
+        int root = (int) Math.round(Math.sqrt(hpw));
+        if (root * root != hpw) {
+            throw new IllegalArgumentException("world.homes-per-world 必须是完全平方数（当前：" + hpw + "）");
+        }
+        if (slotSize() < 2) {
+            throw new IllegalArgumentException("world.slot-size 必须 >= 2");
+        }
+        if (tiers.isEmpty()) {
+            throw new IllegalArgumentException("tiers 配置不能为空");
+        }
     }
 
     private static int intOf(Object o, int def) {

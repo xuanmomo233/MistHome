@@ -11,7 +11,7 @@ softdepend:
 commands:
   misthome:
     description: 家园主命令
-    aliases: [mh, home]
+    aliases: [mh]
     usage: /misthome <子命令>
 permissions:
   misthome.use:

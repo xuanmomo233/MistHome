@@ -34,10 +34,16 @@ public class EconomyService {
         return economy != null;
     }
 
-    /** 扣款；无经济环境或余额不足返回 false 时由调用方处理 */
+    /**
+     * 扣款；无经济环境或余额不足返回 false 时由调用方处理。
+     * amount == 0 视为免费通过；amount < 0 直接拒绝。
+     */
     public boolean withdraw(OfflinePlayer player, double amount) {
-        if (economy == null || amount <= 0) {
+        if (economy == null || amount == 0) {
             return true;
+        }
+        if (amount < 0) {
+            return false;
         }
         if (!economy.has(player, amount)) {
             return false;

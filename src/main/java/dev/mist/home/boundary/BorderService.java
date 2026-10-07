@@ -51,6 +51,7 @@ public class BorderService {
 
     private void sendWorldBorderPacket(Player player, HomeRegion region) {
         // TODO: ProtocolLibrary.getProtocolManager().sendServerPacket(...)
-        //   中心 = region.centerX/Z，直径 = usableRadius*2
+        //   中心 = region.centerX/Z，直径保底 1.0
+        double diameter = Math.max(region.usableRadius() * 2.0, 1.0);
     }
 }

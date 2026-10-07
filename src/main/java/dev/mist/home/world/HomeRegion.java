@@ -43,15 +43,21 @@ public class HomeRegion {
     public int usableMinZ() { return centerZ - usableRadius; }
     public int usableMaxZ() { return centerZ + usableRadius; }
 
-    /** 该坐标是否落在本家园的可用范围内 */
+    /**
+     * 该坐标是否落在本家园的可用范围内。
+     * 使用半开区间 [min, max)，保证相邻家园区域互不重叠。
+     */
     public boolean containsUsable(double x, double z) {
-        return x >= usableMinX() && x <= usableMaxX()
-                && z >= usableMinZ() && z <= usableMaxZ();
+        return x >= usableMinX() && x < usableMaxX()
+                && z >= usableMinZ() && z < usableMaxZ();
     }
 
-    /** 该坐标是否落在本家园的预留槽位内（含未解锁区域） */
+    /**
+     * 该坐标是否落在本家园的预留槽位内（含未解锁区域）。
+     * 半开区间，相邻槽位之间保持 gap 隔离。
+     */
     public boolean containsSlot(double x, double z) {
-        return x >= centerX - slotRadius && x <= centerX + slotRadius
-                && z >= centerZ - slotRadius && z <= centerZ + slotRadius;
+        return x >= centerX - slotRadius && x < centerX + slotRadius
+                && z >= centerZ - slotRadius && z < centerZ + slotRadius;
     }
 }

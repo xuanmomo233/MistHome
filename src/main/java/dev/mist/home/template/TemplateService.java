@@ -1,7 +1,6 @@
 package dev.mist.home.template;
 
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import dev.mist.home.MistHomePlugin;
@@ -22,6 +21,7 @@ public class TemplateService {
 
     private final MistHomePlugin plugin;
     private boolean worldEditAvailable;
+    private volatile boolean pasting;
 
     public TemplateService(MistHomePlugin plugin) {
         this.plugin = plugin;
@@ -40,6 +40,10 @@ public class TemplateService {
         return worldEditAvailable;
     }
 
+    public boolean isPasting() {
+        return pasting;
+    }
+
     /** 列出可用模板文件名（不含扩展名） */
     public List<String> listTemplates() {
         File dir = new File(plugin.getDataFolder(), plugin.mistConfig().templateDir());
@@ -54,19 +58,35 @@ public class TemplateService {
     }
 
     /**
-     * 在指定家园区域内粘贴模板（异步完成）。
+     * 在指定家园区域内粘贴模板（异步完成，实际在主线程执行方块操作）。
      * TODO: WorldEdit Clipboard API 粘贴实现（EditSession + ClipboardHolder），
      * 注意 Mohist 上 WE 需为 Bukkit 插件版。
      */
     public CompletableFuture<Void> paste(String template, World world, HomeRegion region) {
-        if (!worldEditAvailable || template == null) {
-            return CompletableFuture.runAsync(() ->
-                    pasteFallbackPlatform(world, region),
-                    r -> Bukkit.getScheduler().runTask(plugin, r));
-        }
-        // TODO: 读取 templates/<name>.schem -> ClipboardFormat -> ClipboardReader
-        //       -> EditSession paste 到 region 中心，Operation 可分批提交防卡服
-        return CompletableFuture.completedFuture(null);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            pasting = true;
+            try {
+                if (!worldEditAvailable || template == null) {
+                    pasteFallbackPlatform(world, region);
+                } else {
+                    pasteWorldEdit(template, world, region);
+                }
+                future.complete(null);
+            } catch (Throwable t) {
+                future.completeExceptionally(t);
+            } finally {
+                pasting = false;
+            }
+        });
+        return future;
+    }
+
+    /** TODO：WorldEdit .schem 粘贴实现 */
+    private void pasteWorldEdit(String template, World world, HomeRegion region) {
+        // 读取 plugins/MistHome/templates/<template>.schem
+        // -> ClipboardFormat -> ClipboardReader -> EditSession paste 到 region 中心
+        plugin.getLogger().warning("WorldEdit 模板粘贴尚未实现，家园 " + template + " 未粘贴");
     }
 
     /** 降级：在区域中心生成 fallback-platform-size 边长的平台 */

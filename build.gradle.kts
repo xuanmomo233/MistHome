@@ -44,10 +44,8 @@ dependencies {
 
     // 存储层：shade 进 jar（HikariCP + SQLite + MySQL）
     implementation("com.zaxxer:HikariCP:5.1.0")
-    implementation("org.xerial:sqlite-jdbc:3.45.3.0")
-    implementation("com.mysql:mysql-connector-j:8.2.0") {
-        isTransitive = false
-    }
+    implementation("org.xerial:sqlite-jdbc:3.45.3.0")            // 不重定位，避免 native 资源路径错位
+    implementation("com.mysql:mysql-connector-j:8.2.0")          // 保留 protobuf-java 等传递依赖
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.11.4")
@@ -80,8 +78,9 @@ tasks.shadowJar {
     archiveClassifier.set("")
     //  relocate 防止与其他插件内嵌依赖冲突
     relocate("com.zaxxer.hikari", "dev.mist.home.libs.hikari")
-    relocate("org.sqlite", "dev.mist.home.libs.sqlite")
+    // org.sqlite 不重定位：sqlite-jdbc 的 native 库资源路径与类包强关联，重定位后可能加载失败
     relocate("com.mysql", "dev.mist.home.libs.mysql")
+    relocate("com.google.protobuf", "dev.mist.home.libs.protobuf")  // mysql-connector-j 的传递依赖
     mergeServiceFiles()
 }
 

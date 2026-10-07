@@ -7,6 +7,7 @@ import dev.mist.home.boundary.BorderService;
 import dev.mist.home.command.MistHomeCommand;
 import dev.mist.home.config.MistConfig;
 import dev.mist.home.economy.EconomyService;
+import dev.mist.home.home.HomeService;
 import dev.mist.home.invite.InviteManager;
 import dev.mist.home.protect.ProtectionListener;
 import dev.mist.home.storage.MysqlStorage;
@@ -26,6 +27,7 @@ public final class MistHomePlugin extends JavaPlugin {
 
     private MistConfig mistConfig;
     private HomeWorldManager worldManager;
+    private HomeService homeService;
     private EconomyService economy;
     private TemplateService templates;
     private BorderService borders;
@@ -36,6 +38,13 @@ public final class MistHomePlugin extends JavaPlugin {
     public void onEnable() {
         saveDefaultConfig();
         mistConfig = new MistConfig(getConfig());
+        try {
+            mistConfig.validate();
+        } catch (IllegalArgumentException e) {
+            getLogger().log(Level.SEVERE, "配置文件校验失败，插件停用: " + e.getMessage());
+            Bukkit.getPluginManager().disablePlugin(this);
+            return;
+        }
 
         // 存储层
         storage = "mysql".equalsIgnoreCase(mistConfig.storageType())
@@ -52,6 +61,9 @@ public final class MistHomePlugin extends JavaPlugin {
         worldManager = new HomeWorldManager(this);
         worldManager.start();
 
+        // 家园领域服务
+        homeService = new HomeService(this, storage);
+
         // 软依赖钩子
         economy = new EconomyService(this);
         economy.hook();
@@ -63,7 +75,7 @@ public final class MistHomePlugin extends JavaPlugin {
         invites = new InviteManager(this);
 
         // 监听器
-        Bukkit.getPluginManager().registerEvents(new ProtectionListener(this), this);
+        Bukkit.getPluginManager().registerEvents(new ProtectionListener(this, homeService), this);
 
         // 命令
         PluginCommand cmd = getCommand("misthome");
@@ -92,6 +104,10 @@ public final class MistHomePlugin extends JavaPlugin {
 
     public HomeWorldManager worldManager() {
         return worldManager;
+    }
+
+    public HomeService homeService() {
+        return homeService;
     }
 
     public EconomyService economy() {
