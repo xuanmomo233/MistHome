@@ -13,6 +13,7 @@ import dev.mist.home.protect.ProtectionListener;
 import dev.mist.home.storage.MysqlStorage;
 import dev.mist.home.storage.SqliteStorage;
 import dev.mist.home.storage.Storage;
+import dev.mist.home.teleport.TeleportService;
 import dev.mist.home.template.TemplateService;
 import dev.mist.home.world.HomeWorldManager;
 
@@ -32,6 +33,7 @@ public final class MistHomePlugin extends JavaPlugin {
     private TemplateService templates;
     private BorderService borders;
     private InviteManager invites;
+    private TeleportService teleportService;
     private Storage storage;
 
     @Override
@@ -73,6 +75,10 @@ public final class MistHomePlugin extends JavaPlugin {
         borders.hook();
 
         invites = new InviteManager(this);
+
+        // 传送服务（吟唱/冷却/打断，本身是监听器）
+        teleportService = new TeleportService(this);
+        Bukkit.getPluginManager().registerEvents(teleportService, this);
 
         // 监听器
         Bukkit.getPluginManager().registerEvents(new ProtectionListener(this, homeService), this);
@@ -127,6 +133,10 @@ public final class MistHomePlugin extends JavaPlugin {
 
     public InviteManager invites() {
         return invites;
+    }
+
+    public TeleportService teleportService() {
+        return teleportService;
     }
 
     public Storage storage() {
