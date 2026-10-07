@@ -52,8 +52,16 @@ plugins/MistHome/homes/<玩家名_uuid8>/        家园存档（唯一真身）
 - 槽位边长 `slot-size` 必须是 **512 的倍数**（1024 = 2×2 region），槽位紧密排列无 gap
 - 每个槽位独占 `(slotSize/512)²` 组 mca 文件 → 家园与物理位置完全解耦，可自由拼接迁移
 - 存档文件名使用槽位**本地坐标**（r.0.0 起），恢复时按目标槽位基坐标重命名
+- **换槽位坐标平移**：文件名归一化只管"放在哪"，文件内绝对坐标（实体 `Pos`、
+  Create 装配体 `Anchor`、MovementContext `Position`、POI `pos`、方块实体 `x/z`、
+  区块 `xPos/zPos`/`Position`）必须按 region 基差平移，由 `RegionRelocator` 在
+  恢复落盘时完成；归档/崩溃归档都会在 `meta.json` 记 `regionBaseX/Z` 作为平移基准
+- Create 装配体内部 Blocks/Seats/Superglue/Bounds 全是锚点相对局部坐标，平移
+  `Pos + Anchor` 即等价于整体世界平移（已核对 Creators-of-Create/Create mc1.20.1
+  源码，双轴向实测通过）；列车等依赖全局轨道网络 savedata 的结构超出本模型
 - 槽内可用半径上限 = `slotSize/2 - 模拟距离`（默认 352），保证玩家够不到邻居空槽
 - 实现见 `SlotAllocator`（region 对齐数学）/ `HomeArchiveService`（文件搬运）
+  / `RegionRelocator`（mca 内坐标重写；querz-nbt 仅做 NBT 层，容器格式自实现）
 
 ## 4. 停放生命周期
 
