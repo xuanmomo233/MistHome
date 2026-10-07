@@ -17,6 +17,7 @@ import dev.mist.home.model.HomeVisibility;
 import dev.mist.home.world.HomeRegion;
 import dev.mist.home.world.SlotAllocator;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,7 +70,13 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("仅玩家可使用");
+            // 控制台仅放行数据迁移命令（报告直接打印到控制台）
+            if (args.length >= 2 && args[0].equalsIgnoreCase("admin")
+                    && args[1].equalsIgnoreCase("import-selfhome")) {
+                adminImportSelfHome(sender, args);
+            } else {
+                sender.sendMessage("仅玩家可使用");
+            }
             return true;
         }
         if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
@@ -551,7 +558,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (args.length < 2) {
-            msg(player, "§c用法：/mh admin <reload|visit|unload|info>");
+            msg(player, "§c用法：/mh admin <reload|visit|unload|info|import-selfhome>");
             return;
         }
         switch (args[1].toLowerCase()) {
@@ -559,8 +566,39 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             case "visit" -> adminVisit(player, args);
             case "unload" -> adminUnload(player, args);
             case "info" -> adminInfo(player);
+            case "import-selfhome" -> adminImportSelfHome(player, args);
             default -> msg(player, "§c未知管理子命令");
         }
+    }
+
+    /**
+     * /mh admin import-selfhome <服务器根目录> [SelfHomeMain数据目录]
+     * 批量导入旧插件家园世界+数据。异步执行，完成后把报告逐条发给操作者。
+     */
+    private void adminImportSelfHome(CommandSender sender, String[] args) {
+        if (args.length < 3) {
+            sender.sendMessage("§c用法：/mh admin import-selfhome <服务器根目录> [SelfHomeMain目录] [cleanup]");
+            return;
+        }
+        File serverRoot = new File(args[2]);
+        File dataDir = args.length > 3 && !args[3].equalsIgnoreCase("cleanup")
+                ? new File(args[3])
+                : new File(serverRoot, "plugins" + File.separator + "SelfHomeMain");
+        boolean cleanup = args.length > 3 && args[args.length - 1].equalsIgnoreCase("cleanup");
+        if (!serverRoot.isDirectory()) {
+            sender.sendMessage("§c目录不存在：" + serverRoot.getPath());
+            return;
+        }
+        if (!new File(dataDir, "playerdata").isDirectory()) {
+            sender.sendMessage("§c未找到 playerdata 目录：" + dataDir.getPath());
+            return;
+        }
+        sender.sendMessage("§7开始导入 SelfHome 数据（异步）"
+                + (cleanup ? "，成功的旧世界将移入 _已迁移/" : "") + "，完成后报告…");
+        plugin.selfHomeImporter().importAsync(serverRoot, dataDir, cleanup)
+                .thenAcceptAsync(report -> report.lines.forEach(l ->
+                        sender.sendMessage(plugin.mistConfig().prefix() + l)),
+                        mainExecutor);
     }
 
     private void adminReload(Player player) {

@@ -227,6 +227,15 @@ public class HomeArchiveService {
         }
     }
 
+    /** 供旧插件导入器写入归档元数据（regionBase = 旧世界被截取窗口的基坐标） */
+    public void writeArchiveMeta(Path homeDir, long homeId, java.util.UUID owner,
+                                 List<String> files, int regionBaseX, int regionBaseZ)
+            throws IOException {
+        writeMeta(homeDir.resolve("meta.json"),
+                new Meta(homeId, owner.toString(), files,
+                        System.currentTimeMillis(), regionBaseX, regionBaseZ));
+    }
+
     public Meta readMeta(Path homeDir) {
         Path metaFile = homeDir.resolve("meta.json");
         if (!Files.isRegularFile(metaFile)) {

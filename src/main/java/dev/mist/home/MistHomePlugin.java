@@ -36,6 +36,7 @@ public final class MistHomePlugin extends JavaPlugin {
     private InviteManager invites;
     private TeleportService teleportService;
     private Storage storage;
+    private dev.mist.home.importer.SelfHomeImporter selfHomeImporter;
 
     @Override
     public void onEnable() {
@@ -77,6 +78,9 @@ public final class MistHomePlugin extends JavaPlugin {
         borders.hook();
 
         invites = new InviteManager(this);
+
+        // 旧插件导入器（SelfHome 世界/yml → 家园存档）
+        selfHomeImporter = new dev.mist.home.importer.SelfHomeImporter(this);
 
         // 传送服务（吟唱/冷却/打断，本身是监听器）
         teleportService = new TeleportService(this);
@@ -177,5 +181,9 @@ public final class MistHomePlugin extends JavaPlugin {
 
     public Storage storage() {
         return storage;
+    }
+
+    public dev.mist.home.importer.SelfHomeImporter selfHomeImporter() {
+        return selfHomeImporter;
     }
 }
