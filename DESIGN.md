@@ -213,7 +213,7 @@ dev.mist.home
 
 ## 14. 开发里程碑
 
-- [ ] M1 存储层：JdbcStorage CRUD + 建表 SQL + HomeService 缓存与反查索引
+- [x] M1 存储层：JdbcStorage CRUD + 建表 SQL + HomeService 缓存与反查索引
 - [ ] M2 家园生命周期：create/home 命令 + 传送吟唱 + 世界按需加载联调
 - [ ] M3 保护：ProtectionListener 全事件覆盖 + 预留区拦截
 - [ ] M4 权限与成员：invite/members/ban + GUI
