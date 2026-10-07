@@ -90,8 +90,12 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
             case "ban" -> cmdBan(player, args);
             case "unban" -> cmdUnban(player, args);
             case "gui" -> cmdGui(player);
-            case "public", "private", "upgrade", "list", "admin" ->
-                    msg(player, "§7子命令 " + sub + " 将在后续里程碑实现");
+            case "public" -> cmdVisibility(player, HomeVisibility.PUBLIC);
+            case "private" -> cmdVisibility(player, HomeVisibility.PRIVATE);
+            case "upgrade" -> cmdUpgrade(player);
+            case "list" -> cmdList(player);
+            case "admin" ->
+                    msg(player, "§7子命令 admin 将在后续里程碑实现");
             default -> {
                 msg(player, "§c未知子命令，输入 /mh 查看帮助");
             }
@@ -206,20 +210,7 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                         msg(player, "§c对方没有家园");
                         return;
                     }
-                    Home home = opt.get();
-                    HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
-                    if (!role.canVisit()) {
-                        msg(player, "§c你已被该家园封禁");
-                        return;
-                    }
-                    boolean allowed = home.visibility() == HomeVisibility.PUBLIC
-                            || role.canBuild()   // MEMBER+
-                            || home.owner().equals(player.getUniqueId());
-                    if (!allowed) {
-                        msg(player, "§c该家园未公开，需要邀请才能进入");
-                        return;
-                    }
-                    plugin.teleportService().teleportToHome(player, home);
+                    dev.mist.home.actions.HomeActions.visit(plugin, player, opt.get());
                 }, mainExecutor);
     }
 
@@ -421,6 +412,78 @@ public class MistHomeCommand implements CommandExecutor, TabCompleter {
                     }
                     new dev.mist.home.gui.MainMenu(plugin, player, opt.get()).open(player);
                 }, mainExecutor);
+    }
+
+    // ---------- M7 公开/升级/列表 ----------
+
+    /** /mh public|private —— OPERATOR+ 切换可见性 */
+    private void cmdVisibility(Player player, HomeVisibility target) {
+        plugin.homeService().homeOfAsync(player.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c你还没有家园");
+                        return;
+                    }
+                    Home home = opt.get();
+                    HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
+                    if (!role.canManageSettings()) {
+                        msg(player, "§c需要家园管理员权限");
+                        return;
+                    }
+                    if (home.visibility() == target) {
+                        msg(player, "§7家园已是" + (target == HomeVisibility.PUBLIC
+                                ? "公开" : "私密") + "状态");
+                        return;
+                    }
+                    home.setVisibility(target);
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
+                            plugin.homeService().storage().updateHome(home));
+                    msg(player, "§a家园已设为"
+                            + (target == HomeVisibility.PUBLIC ? "公开，任何人可参观" : "私密"));
+                }, mainExecutor);
+    }
+
+    /** /mh upgrade —— OWNER 升级档位（扣 Vault） */
+    private void cmdUpgrade(Player player) {
+        plugin.homeService().homeOfAsync(player.getUniqueId())
+                .thenAcceptAsync(opt -> {
+                    if (opt.isEmpty()) {
+                        msg(player, "§c你还没有家园");
+                        return;
+                    }
+                    Home home = opt.get();
+                    HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
+                    if (role != HomeRole.OWNER) {
+                        msg(player, "§c只有家园主可以升级");
+                        return;
+                    }
+                    var next = plugin.mistConfig().nextTier(home.tierLevel());
+                    if (next == null) {
+                        msg(player, "§7已是最高档位");
+                        return;
+                    }
+                    double price = next.upgradePrice();
+                    if (price > 0 && !plugin.economy().withdraw(player, price)) {
+                        msg(player, "§c余额不足，升级到 " + next.name()
+                                + " 需要 " + price);
+                        return;
+                    }
+                    home.setTierLevel(next.level());
+                    Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
+                            plugin.homeService().storage().updateHome(home));
+                    msg(player, "§a升级成功！" + next.name()
+                            + "（半径 " + next.radius() + "）"
+                            + (price > 0 ? "，花费 " + price : ""));
+                }, mainExecutor);
+    }
+
+    /** /mh list —— 公共家园列表 */
+    private void cmdList(Player player) {
+        if (!player.hasPermission("misthome.visit")) {
+            msg(player, "§c无权限");
+            return;
+        }
+        dev.mist.home.gui.PublicHomesMenu.open(plugin, player, 0);
     }
 
     private void sendHelp(Player player) {
