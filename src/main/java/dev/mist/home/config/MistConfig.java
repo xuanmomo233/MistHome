@@ -262,6 +262,8 @@ public class MistConfig {
     }
 
     public String prefix() {
-        return config.getString("messages.prefix", "&8[&bMistHome&8] &r");
+        // 配置里用 & 写颜色符号（YAML 里 § 容易出编码问题），发出前转成 §
+        return org.bukkit.ChatColor.translateAlternateColorCodes('&',
+                config.getString("messages.prefix", "&8[&bMistHome&8] &r"));
     }
 }

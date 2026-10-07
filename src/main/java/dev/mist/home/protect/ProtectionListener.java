@@ -75,6 +75,10 @@ public class ProtectionListener implements Listener {
         if (w == null || !plugin.worldManager().isHomeWorld(w.getName())) {
             return true;
         }
+        // 管理员越权：misthome.bypass（misthome.admin 隐含）无视角色/封禁/预留区
+        if (player.hasPermission("misthome.bypass") || player.hasPermission("misthome.admin")) {
+            return true;
+        }
         Optional<Home> opt = homeService.homeAt(w, loc.getBlockX(), loc.getBlockZ());
         if (opt.isEmpty()) {
             return false;   // 空闲槽位 / 未分配槽位 / 超出网格

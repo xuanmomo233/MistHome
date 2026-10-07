@@ -21,5 +21,8 @@ permissions:
     description: 参观公开家园
     default: true
   misthome.admin:
-    description: 家园管理权限
+    description: 家园管理权限（隐含 bypass）
+    default: op
+  misthome.bypass:
+    description: 越过家园保护/封禁/私有检查（管理巡查用）
     default: op

@@ -27,11 +27,13 @@ public final class HomeActions {
             return false;
         }
         HomeRole role = plugin.homeService().roleOf(home, player.getUniqueId());
-        if (!role.canVisit()) {
+        boolean bypass = player.hasPermission("misthome.bypass")
+                || player.hasPermission("misthome.admin");
+        if (!bypass && !role.canVisit()) {
             player.sendMessage(prefix + "§c你已被该家园封禁");
             return false;
         }
-        boolean allowed = home.visibility() == HomeVisibility.PUBLIC
+        boolean allowed = bypass || home.visibility() == HomeVisibility.PUBLIC
                 || role.canBuild()
                 || home.owner().equals(player.getUniqueId());
         if (!allowed) {
