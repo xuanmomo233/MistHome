@@ -24,6 +24,15 @@ public interface Storage {
 
     Optional<Home> findHomeById(long homeId);
 
+    /** 按全局槽位索引查家园 */
+    Optional<Home> findHomeBySlot(int slotIndex);
+
+    /**
+     * 批量读取指定槽位区间内的家园（世界加载时预热缓存用）。
+     * 区间 [fromInclusive, toExclusive)。
+     */
+    List<Home> listHomesInSlots(int fromInclusive, int toExclusive);
+
     /** 分配下一个空闲的全局槽位索引（最小未占用值） */
     int allocateSlot();
 

@@ -59,6 +59,22 @@ public class HomeWorldManager {
         return worldName != null && worldName.startsWith(config.worldPrefix());
     }
 
+    /**
+     * 从世界名解析世界索引（misthome_N → N）。
+     * 非家园世界或后缀非数字返回 -1。
+     */
+    public int parseWorldIndex(String worldName) {
+        if (!isHomeWorld(worldName)) {
+            return -1;
+        }
+        String suffix = worldName.substring(config.worldPrefix().length());
+        try {
+            return Integer.parseInt(suffix);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
     public boolean isLoaded(int worldIndex) {
         return loaded.containsKey(worldIndex);
     }
@@ -98,6 +114,10 @@ public class HomeWorldManager {
                     emptySince.remove(worldIndex);
                     future.complete(world);
                     plugin.getLogger().info("家园世界已加载: " + name);
+                    // 预热该世界内所有家园缓存，玩家落地前 homeAt 判定就绪
+                    if (plugin.homeService() != null) {
+                        plugin.homeService().warmWorld(worldIndex);
+                    }
                 }
             } catch (Throwable t) {
                 future.completeExceptionally(t);

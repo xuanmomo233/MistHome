@@ -1,5 +1,7 @@
 package dev.mist.home.world;
 
+import java.util.OptionalInt;
+
 /**
  * 槽位分配几何计算。
  * <p>
@@ -39,5 +41,34 @@ public final class SlotAllocator {
         int centerX = (int) Math.round((gridX - (cols - 1) / 2.0) * pitch);
         int centerZ = (int) Math.round((gridZ - (cols - 1) / 2.0) * pitch);
         return new HomeRegion(worldIndex, gridX, gridZ, centerX, centerZ, slotSize / 2, usableRadius);
+    }
+
+    /**
+     * 坐标反查：给定世界内坐标，计算其落在哪个槽位。
+     * 落在槽位之间的 gap 隔离带上时返回 empty（无主之地）。
+     *
+     * @param worldIndex 世界索引（misthome_N 中的 N）
+     */
+    public static OptionalInt slotIndexAt(int worldIndex, int homesPerWorld,
+                                          int slotSize, int gap, double x, double z) {
+        int cols = (int) Math.floor(Math.sqrt(homesPerWorld));
+        double pitch = slotSize + gap;
+        // 与 regionOf 相反方向推回网格坐标
+        int gridX = (int) Math.round(x / pitch + (cols - 1) / 2.0);
+        int gridZ = (int) Math.round(z / pitch + (cols - 1) / 2.0);
+        if (gridX < 0 || gridX >= cols || gridZ < 0 || gridZ >= cols) {
+            return OptionalInt.empty();
+        }
+        int inner = gridZ * cols + gridX;
+        if (inner >= homesPerWorld) {
+            return OptionalInt.empty();
+        }
+        int slotIndex = worldIndex * homesPerWorld + inner;
+        // 边界校验：坐标必须落在槽位半开区间 [min, max) 内，gap 带不算槽位
+        HomeRegion probe = regionOf(slotIndex, homesPerWorld, slotSize, gap, 0);
+        if (!probe.containsSlot(x, z)) {
+            return OptionalInt.empty();
+        }
+        return OptionalInt.of(slotIndex);
     }
 }

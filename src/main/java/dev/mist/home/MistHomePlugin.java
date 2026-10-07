@@ -93,6 +93,9 @@ public final class MistHomePlugin extends JavaPlugin {
         if (worldManager != null) {
             worldManager.shutdown();
         }
+        if (homeService != null) {
+            homeService.shutdown();
+        }
         if (storage != null) {
             storage.close();
         }
